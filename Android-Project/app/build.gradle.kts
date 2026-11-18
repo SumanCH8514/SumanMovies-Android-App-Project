@@ -99,8 +99,7 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register("pushNewPlayerApk") {
-    dependsOn("copyNewPlayerApk", "copyDebugApk")
+tasks.register("pullAndPush") {
     doLast {
         val root = rootProject.file("..")
         fun runCmd(vararg args: String): String {
@@ -110,12 +109,15 @@ tasks.register("pushNewPlayerApk") {
             p.waitFor()
             return "$out\n$err".trim()
         }
+        val pullRes = runCmd("git", "pull", "--rebase", "--autostash", "origin", "main")
         val addRes = runCmd("git", "add", "-A")
-        val commitRes = runCmd("git", "commit", "-m", "release: push SumanMovies-v1.0.0-new-player.apk with upgraded player engine")
+        val commitRes = runCmd("git", "commit", "-m", "chore: sync repository files")
         val pushRes = runCmd("git", "push", "origin", "main")
-        root.resolve("scratch_git.txt").writeText("ADD:\n$addRes\nCOMMIT:\n$commitRes\nPUSH:\n$pushRes")
+        root.resolve("scratch_git.txt").writeText("PULL:\n$pullRes\nADD:\n$addRes\nCOMMIT:\n$commitRes\nPUSH:\n$pushRes")
     }
 }
+
+
 
 
 
