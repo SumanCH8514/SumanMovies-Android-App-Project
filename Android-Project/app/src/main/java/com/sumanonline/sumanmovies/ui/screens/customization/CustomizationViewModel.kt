@@ -1,10 +1,13 @@
 package com.sumanonline.sumanmovies.ui.screens.customization
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.sumanonline.sumanmovies.data.local.AppPreferencesManager
 import com.sumanonline.sumanmovies.ui.theme.AppAccent
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 
 enum class AppearanceMode {
     DEVICE,
@@ -25,27 +28,53 @@ data class CustomizationUiState(
     val selectedLanguage: String = "en-US"
 )
 
-class CustomizationViewModel : ViewModel() {
-    private val _uiState = MutableStateFlow(CustomizationUiState())
-    val uiState: StateFlow<CustomizationUiState> = _uiState.asStateFlow()
+class CustomizationViewModel(
+    private val preferencesManager: AppPreferencesManager
+) : ViewModel() {
+
+    val uiState: StateFlow<CustomizationUiState> = combine(
+        preferencesManager.appearanceMode,
+        preferencesManager.homeTabsStyle,
+        preferencesManager.selectedAccent,
+        preferencesManager.applyPaletteToPlayer,
+        preferencesManager.selectedLanguage
+    ) { mode, style, accent, playerPalette, lang ->
+        CustomizationUiState(
+            appearanceMode = mode,
+            homeTabsStyle = style,
+            selectedAccent = accent,
+            applyPaletteToPlayer = playerPalette,
+            selectedLanguage = lang
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = CustomizationUiState(
+            appearanceMode = preferencesManager.appearanceMode.value,
+            homeTabsStyle = preferencesManager.homeTabsStyle.value,
+            selectedAccent = preferencesManager.selectedAccent.value,
+            applyPaletteToPlayer = preferencesManager.applyPaletteToPlayer.value,
+            selectedLanguage = preferencesManager.selectedLanguage.value
+        )
+    )
 
     fun setAppearanceMode(mode: AppearanceMode) {
-        _uiState.value = _uiState.value.copy(appearanceMode = mode)
+        preferencesManager.setAppearanceMode(mode)
     }
 
     fun setHomeTabsStyle(style: HomeTabsStyle) {
-        _uiState.value = _uiState.value.copy(homeTabsStyle = style)
+        preferencesManager.setHomeTabsStyle(style)
     }
 
     fun setAccent(accent: AppAccent) {
-        _uiState.value = _uiState.value.copy(selectedAccent = accent)
+        preferencesManager.setSelectedAccent(accent)
     }
 
     fun toggleApplyPaletteToPlayer() {
-        _uiState.value = _uiState.value.copy(applyPaletteToPlayer = !_uiState.value.applyPaletteToPlayer)
+        preferencesManager.setApplyPaletteToPlayer(!preferencesManager.applyPaletteToPlayer.value)
     }
 
     fun setLanguage(lang: String) {
-        _uiState.value = _uiState.value.copy(selectedLanguage = lang)
+        preferencesManager.setSelectedLanguage(lang)
     }
 }

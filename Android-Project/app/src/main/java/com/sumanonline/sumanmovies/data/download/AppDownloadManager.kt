@@ -38,7 +38,8 @@ data class DownloadProgress(
 
 class AppDownloadManager(
     private val context: Context,
-    private val downloadDao: DownloadDao
+    private val downloadDao: DownloadDao,
+    private val preferencesManager: com.sumanonline.sumanmovies.data.local.AppPreferencesManager? = null
 ) {
     private val systemDownloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
     private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

@@ -4,12 +4,14 @@ import android.app.Application
 import android.content.Context
 import com.sumanonline.sumanmovies.data.download.AppDownloadManager
 import com.sumanonline.sumanmovies.data.local.AppDatabase
+import com.sumanonline.sumanmovies.data.local.AppPreferencesManager
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
 import com.sumanonline.sumanmovies.data.remote.tmdb.TmdbRepository
+import com.sumanonline.sumanmovies.data.remote.update.AppUpdateManager
 import com.sumanonline.sumanmovies.data.repository.MediaRepository
 import com.sumanonline.sumanmovies.data.repository.PlaybackResolver
 import com.sumanonline.sumanmovies.data.repository.ServerSelectionManager
@@ -17,6 +19,12 @@ import com.sumanonline.sumanmovies.data.repository.ServerSelectionManager
 class SumanMoviesApp : Application() {
 
     lateinit var database: AppDatabase
+        private set
+
+    lateinit var preferencesManager: AppPreferencesManager
+        private set
+
+    lateinit var updateManager: AppUpdateManager
         private set
 
     lateinit var tmdbRepository: TmdbRepository
@@ -54,13 +62,15 @@ class SumanMoviesApp : Application() {
         instance = this
 
         database = AppDatabase.getInstance(this)
+        preferencesManager = AppPreferencesManager(this)
+        updateManager = AppUpdateManager()
         tmdbRepository = TmdbRepository(apiKey = BuildConfig.TMDB_API_KEY)
         backendRepository = BackendRepository(baseUrl = BuildConfig.BACKEND_BASE_URL)
         movieBoxClient = MovieBoxMobileClient(backendRepository)
         fourKHdHubClient = FourKHdHubMobileClient()
         hdHub4uClient = HDHub4uMobileClient()
         play4UClient = Play4UMobileClient()
-        downloadManager = AppDownloadManager(this, database.downloadDao())
+        downloadManager = AppDownloadManager(this, database.downloadDao(), preferencesManager)
         serverSelectionManager = ServerSelectionManager(this)
         val searchHistoryManager = com.sumanonline.sumanmovies.data.repository.SearchHistoryManager(this)
         playbackResolver = PlaybackResolver(backendRepository, movieBoxClient, fourKHdHubClient, hdHub4uClient, play4UClient)
