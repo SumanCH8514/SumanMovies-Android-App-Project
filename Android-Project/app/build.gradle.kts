@@ -92,22 +92,20 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register("gitCommitAndPush") {
+tasks.register("gitPush") {
     dependsOn("copyDebugApk")
     doLast {
         val root = rootProject.file("..")
-        fun runCmd(vararg args: String): String {
+        fun runCmd(vararg args: String) {
             val p = ProcessBuilder(*args).directory(root).start()
-            val out = p.inputStream.bufferedReader().readText()
-            val err = p.errorStream.bufferedReader().readText()
             p.waitFor()
-            return "$out\n$err".trim()
         }
-        val addRes = runCmd("git", "add", "-A")
-        val commitRes = runCmd("git", "commit", "-m", "feat: dynamic appearance mode (light/dark/device), home segmented tabs, visit website link, and v1.0.0 APK")
-        val pushRes = runCmd("git", "push", "origin", "main")
-        println("GIT_RESULT:\nAdd: $addRes\nCommit: $commitRes\nPush: $pushRes")
+        runCmd("git", "add", "-A")
+        runCmd("git", "commit", "-m", "chore: clean up logging and update APK")
+        runCmd("git", "push", "origin", "main")
     }
 }
+
+
 
 

@@ -62,7 +62,6 @@ class MainActivity : ComponentActivity() {
                 AppearanceMode.LIGHT -> false
                 AppearanceMode.DEVICE -> isSystemInDarkTheme()
             }
-            android.util.Log.d("SumanMovies", "MainActivity recomposed: isDark=$isDark, mode=$appearanceMode, accent=$selectedAccent")
 
             val view = androidx.compose.ui.platform.LocalView.current
             if (!view.isInEditMode) {
