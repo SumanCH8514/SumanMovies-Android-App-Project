@@ -20,6 +20,7 @@ data class PlayerUiState(
     val mediaTitle: String = "",
     val mediaId: String = "",
     val mediaType: MediaType = MediaType.MOVIE,
+    val releaseYear: String? = null,
     val posterUrl: String? = null,
     val serverName: String? = null,
     val serverDisplayName: String? = null,
@@ -164,6 +165,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         title: String,
         mediaType: MediaType,
         posterUrl: String?,
+        releaseYear: String? = null,
         initialStreamUrl: String?,
         initialFormat: String?,
         initialQuality: String? = null,
@@ -190,6 +192,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             mediaId = mediaId,
             mediaTitle = title,
             mediaType = mediaType,
+            releaseYear = releaseYear,
             posterUrl = posterUrl,
             serverName = serverEnum.name,
             serverDisplayName = resolvedServerDisplay,
@@ -197,6 +200,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber
         )
+
+        if (releaseYear.isNullOrBlank()) {
+            viewModelScope.launch {
+                try {
+                    val details = repository.getDetails(mediaId, mediaType)
+                    val yr = details?.year ?: details?.releaseDate?.take(4)
+                    if (!yr.isNullOrBlank()) {
+                        _uiState.value = _uiState.value.copy(releaseYear = yr)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
 
         viewModelScope.launch {
             val initialStream = if (!initialStreamUrl.isNullOrBlank()) {
@@ -411,6 +426,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleControls() {
         _uiState.value = _uiState.value.copy(showControls = !_uiState.value.showControls)
+    }
+
+    fun setControlsVisibility(visible: Boolean) {
+        _uiState.value = _uiState.value.copy(showControls = visible)
     }
 
     fun toggleStreamsDrawer() {

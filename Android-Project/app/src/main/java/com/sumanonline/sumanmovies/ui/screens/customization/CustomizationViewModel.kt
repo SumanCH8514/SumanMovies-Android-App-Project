@@ -20,12 +20,18 @@ enum class HomeTabsStyle {
     TOP_GLASS
 }
 
+enum class PlayerUiStyle {
+    MODERN,
+    CLASSIC
+}
+
 data class CustomizationUiState(
     val appearanceMode: AppearanceMode = AppearanceMode.DARK,
     val homeTabsStyle: HomeTabsStyle = HomeTabsStyle.TOP_GLASS,
     val selectedAccent: AppAccent = AppAccent.ROYAL_INDIGO,
     val applyPaletteToPlayer: Boolean = true,
-    val selectedLanguage: String = "en-US"
+    val selectedLanguage: String = "en-US",
+    val playerUiStyle: PlayerUiStyle = PlayerUiStyle.MODERN
 )
 
 class CustomizationViewModel(
@@ -33,18 +39,24 @@ class CustomizationViewModel(
 ) : ViewModel() {
 
     val uiState: StateFlow<CustomizationUiState> = combine(
-        preferencesManager.appearanceMode,
-        preferencesManager.homeTabsStyle,
-        preferencesManager.selectedAccent,
-        preferencesManager.applyPaletteToPlayer,
-        preferencesManager.selectedLanguage
-    ) { mode, style, accent, playerPalette, lang ->
+        combine(
+            preferencesManager.appearanceMode,
+            preferencesManager.homeTabsStyle,
+            preferencesManager.selectedAccent
+        ) { mode, style, accent -> Triple(mode, style, accent) },
+        combine(
+            preferencesManager.applyPaletteToPlayer,
+            preferencesManager.selectedLanguage,
+            preferencesManager.playerUiStyle
+        ) { playerPalette, lang, playerStyle -> Triple(playerPalette, lang, playerStyle) }
+    ) { (mode, style, accent), (playerPalette, lang, playerStyle) ->
         CustomizationUiState(
             appearanceMode = mode,
             homeTabsStyle = style,
             selectedAccent = accent,
             applyPaletteToPlayer = playerPalette,
-            selectedLanguage = lang
+            selectedLanguage = lang,
+            playerUiStyle = playerStyle
         )
     }.stateIn(
         scope = viewModelScope,
@@ -54,7 +66,8 @@ class CustomizationViewModel(
             homeTabsStyle = preferencesManager.homeTabsStyle.value,
             selectedAccent = preferencesManager.selectedAccent.value,
             applyPaletteToPlayer = preferencesManager.applyPaletteToPlayer.value,
-            selectedLanguage = preferencesManager.selectedLanguage.value
+            selectedLanguage = preferencesManager.selectedLanguage.value,
+            playerUiStyle = preferencesManager.playerUiStyle.value
         )
     )
 
@@ -64,6 +77,10 @@ class CustomizationViewModel(
 
     fun setHomeTabsStyle(style: HomeTabsStyle) {
         preferencesManager.setHomeTabsStyle(style)
+    }
+
+    fun setPlayerUiStyle(style: PlayerUiStyle) {
+        preferencesManager.setPlayerUiStyle(style)
     }
 
     fun setAccent(accent: AppAccent) {

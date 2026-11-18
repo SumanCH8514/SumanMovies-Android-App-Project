@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.Web
 import androidx.compose.material3.Icon
@@ -175,6 +177,39 @@ fun CustomizationScreen(
                         isSelected = state.homeTabsStyle == HomeTabsStyle.TOP_GLASS,
                         accentColor = accent,
                         onClick = { viewModel.setHomeTabsStyle(HomeTabsStyle.TOP_GLASS) }
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            item {
+                SectionLabel(title = "MEDIA PLAYER UI")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            RoundedCornerShape(14.dp)
+                        )
+                ) {
+                    RadioOptionItem(
+                        icon = Icons.Default.SmartDisplay,
+                        title = "Modern (OTT Cinematic)",
+                        subtitle = "Clean distraction-free interface with quick audio/subtitle badges",
+                        isSelected = state.playerUiStyle == PlayerUiStyle.MODERN,
+                        accentColor = accent,
+                        onClick = { viewModel.setPlayerUiStyle(PlayerUiStyle.MODERN) }
+                    )
+                    DividerLine()
+                    RadioOptionItem(
+                        icon = Icons.Default.VideoSettings,
+                        title = "Classic",
+                        subtitle = "Full drawer & modal sheet player interface",
+                        isSelected = state.playerUiStyle == PlayerUiStyle.CLASSIC,
+                        accentColor = accent,
+                        onClick = { viewModel.setPlayerUiStyle(PlayerUiStyle.CLASSIC) }
                     )
                 }
                 Spacer(modifier = Modifier.height(20.dp))

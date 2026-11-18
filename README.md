@@ -22,7 +22,8 @@
 
 Ready-to-install debug APK built with complete hardware acceleration, multi-provider resolvers, and the offline download manager:
 
-- **Latest Build:** [**`SumanMovies-v1.0.0-debug.apk`**](apk/SumanMovies-v1.0.0-debug.apk) (Located in [`apk/`](apk/))
+- **Latest Build (New Player):** [**`SumanMovies-v1.0.0-new-player.apk`**](apk/SumanMovies-v1.0.0-new-player.apk) (Located in [`apk/`](apk/))
+- **Standard Build:** [**`SumanMovies-v1.0.0-debug.apk`**](apk/SumanMovies-v1.0.0-debug.apk)
 - **Architecture:** `arm64-v8a`, `armeabi-v7a`, `x86_64`
 - **Minimum OS:** Android 8.0 (API Level 26) or higher
 - **Target OS:** Android 15 (API Level 35)

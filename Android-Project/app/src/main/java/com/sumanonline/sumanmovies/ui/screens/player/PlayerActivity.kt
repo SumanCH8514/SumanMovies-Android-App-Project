@@ -1,6 +1,13 @@
 package com.sumanonline.sumanmovies.ui.screens.player
 
+import android.app.PictureInPictureParams
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.ui.screens.customization.PlayerUiStyle
 import com.sumanonline.sumanmovies.ui.theme.AppAccent
 import com.sumanonline.sumanmovies.ui.theme.SumanMoviesTheme
 
@@ -20,6 +28,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        volumeControlStream = AudioManager.STREAM_MUSIC
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -30,6 +39,7 @@ class PlayerActivity : ComponentActivity() {
         val title = intent.getStringExtra("EXTRA_TITLE") ?: "Video Player"
         val mediaTypeStr = intent.getStringExtra("EXTRA_MEDIA_TYPE") ?: "MOVIE"
         val posterUrl = intent.getStringExtra("EXTRA_POSTER_URL")
+        val releaseYear = intent.getStringExtra("EXTRA_RELEASE_YEAR")
         val streamUrl = intent.getStringExtra("EXTRA_STREAM_URL")
         val streamFormat = intent.getStringExtra("EXTRA_STREAM_FORMAT")
         val streamQuality = intent.getStringExtra("EXTRA_STREAM_QUALITY")
@@ -81,6 +91,7 @@ class PlayerActivity : ComponentActivity() {
             title = title,
             mediaType = mediaType,
             posterUrl = posterUrl,
+            releaseYear = releaseYear,
             initialStreamUrl = streamUrl,
             initialFormat = streamFormat,
             initialQuality = streamQuality,
@@ -100,13 +111,63 @@ class PlayerActivity : ComponentActivity() {
             val applyPalette = prefs?.applyPaletteToPlayer?.collectAsState()?.value ?: false
             val savedAccent = prefs?.selectedAccent?.collectAsState()?.value ?: AppAccent.ROYAL_INDIGO
             val accent = if (applyPalette) savedAccent else AppAccent.ROYAL_INDIGO
+            val playerUiStyle = prefs?.playerUiStyle?.collectAsState()?.value ?: PlayerUiStyle.MODERN
 
             SumanMoviesTheme(accent = accent) {
                 PlayerScreen(
                     viewModel = viewModel,
-                    onBack = { finish() }
+                    onBack = { finish() },
+                    playerUiStyle = playerUiStyle,
+                    onEnterPip = { enterPipMode() },
+                    onToggleFullscreen = { toggleFullscreen() },
+                    onShare = { mediaTitle, id -> shareContent(mediaTitle, id) }
                 )
             }
+        }
+    }
+
+    private fun enterPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun toggleFullscreen() {
+        requestedOrientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    }
+
+    private fun shareContent(title: String, mediaId: String) {
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, title)
+                putExtra(Intent.EXTRA_TEXT, "Watch \"$title\" on SumanMovies: https://sumanmovies.app/watch/$mediaId")
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share $title"))
+        } catch (_: Exception) {}
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        viewModel.setControlsVisibility(!isInPictureInPictureMode)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (viewModel.playerManager.playbackState.value.isPlaying) {
+            enterPipMode()
         }
     }
 }

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Environment
 import com.sumanonline.sumanmovies.ui.screens.customization.AppearanceMode
 import com.sumanonline.sumanmovies.ui.screens.customization.HomeTabsStyle
+import com.sumanonline.sumanmovies.ui.screens.customization.PlayerUiStyle
 import com.sumanonline.sumanmovies.ui.theme.AppAccent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +54,17 @@ class AppPreferencesManager(private val context: Context) {
         }
     )
     val homeTabsStyle: StateFlow<HomeTabsStyle> = _homeTabsStyle.asStateFlow()
+
+    private val _playerUiStyle = MutableStateFlow(
+        try {
+            PlayerUiStyle.valueOf(
+                prefs.getString(KEY_PLAYER_UI_STYLE, PlayerUiStyle.MODERN.name) ?: PlayerUiStyle.MODERN.name
+            )
+        } catch (_: Exception) {
+            PlayerUiStyle.MODERN
+        }
+    )
+    val playerUiStyle: StateFlow<PlayerUiStyle> = _playerUiStyle.asStateFlow()
 
     private val _applyPaletteToPlayer = MutableStateFlow(
         prefs.getBoolean(KEY_APPLY_PALETTE_TO_PLAYER, true)
@@ -113,6 +125,11 @@ class AppPreferencesManager(private val context: Context) {
     fun setHomeTabsStyle(style: HomeTabsStyle) {
         prefs.edit().putString(KEY_HOME_TABS_STYLE, style.name).apply()
         _homeTabsStyle.value = style
+    }
+
+    fun setPlayerUiStyle(style: PlayerUiStyle) {
+        prefs.edit().putString(KEY_PLAYER_UI_STYLE, style.name).apply()
+        _playerUiStyle.value = style
     }
 
     fun setApplyPaletteToPlayer(enabled: Boolean) {
@@ -237,6 +254,7 @@ class AppPreferencesManager(private val context: Context) {
         private const val KEY_APPEARANCE_MODE = "key_appearance_mode"
         private const val KEY_SELECTED_ACCENT = "key_selected_accent"
         private const val KEY_HOME_TABS_STYLE = "key_home_tabs_style"
+        private const val KEY_PLAYER_UI_STYLE = "key_player_ui_style"
         private const val KEY_APPLY_PALETTE_TO_PLAYER = "key_apply_palette_to_player"
         private const val KEY_SELECTED_LANGUAGE = "key_selected_language"
         private const val KEY_AUTO_PLAY_NEXT = "key_auto_play_next"

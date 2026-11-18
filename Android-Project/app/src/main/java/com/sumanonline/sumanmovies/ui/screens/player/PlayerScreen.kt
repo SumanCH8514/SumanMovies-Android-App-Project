@@ -79,6 +79,7 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.getDisplayCategory
 import com.sumanonline.sumanmovies.data.models.getDisplayQuality
 import com.sumanonline.sumanmovies.data.models.getDisplayTitle
+import com.sumanonline.sumanmovies.ui.screens.customization.PlayerUiStyle
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
@@ -87,6 +88,34 @@ import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 
 @Composable
 fun PlayerScreen(
+    viewModel: PlayerViewModel,
+    onBack: () -> Unit,
+    playerUiStyle: PlayerUiStyle = PlayerUiStyle.MODERN,
+    onEnterPip: () -> Unit = {},
+    onToggleFullscreen: () -> Unit = {},
+    onShare: (String, String) -> Unit = { _, _ -> },
+    modifier: Modifier = Modifier
+) {
+    if (playerUiStyle == PlayerUiStyle.MODERN) {
+        PlayerScreenModern(
+            viewModel = viewModel,
+            onBack = onBack,
+            onEnterPip = onEnterPip,
+            onToggleFullscreen = onToggleFullscreen,
+            onShare = onShare,
+            modifier = modifier
+        )
+    } else {
+        PlayerScreenClassic(
+            viewModel = viewModel,
+            onBack = onBack,
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
+fun PlayerScreenClassic(
     viewModel: PlayerViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier

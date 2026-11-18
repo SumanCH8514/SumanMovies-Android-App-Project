@@ -85,6 +85,13 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
 }
 
+tasks.register<Copy>("copyNewPlayerApk") {
+    dependsOn("assembleDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(rootProject.file("../apk"))
+    rename { "SumanMovies-v1.0.0-new-player.apk" }
+}
+
 tasks.register<Copy>("copyDebugApk") {
     dependsOn("assembleDebug")
     from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
@@ -92,18 +99,24 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register("gitSync") {
+tasks.register("pushNewPlayerApk") {
+    dependsOn("copyNewPlayerApk", "copyDebugApk")
     doLast {
         val root = rootProject.file("..")
-        fun runCmd(vararg args: String) {
+        fun runCmd(vararg args: String): String {
             val p = ProcessBuilder(*args).directory(root).start()
+            val out = p.inputStream.bufferedReader().readText()
+            val err = p.errorStream.bufferedReader().readText()
             p.waitFor()
+            return "$out\n$err".trim()
         }
-        runCmd("git", "add", "-A")
-        runCmd("git", "commit", "-m", "chore: sync build configuration")
-        runCmd("git", "push", "origin", "main")
+        val addRes = runCmd("git", "add", "-A")
+        val commitRes = runCmd("git", "commit", "-m", "release: push SumanMovies-v1.0.0-new-player.apk with upgraded player engine")
+        val pushRes = runCmd("git", "push", "origin", "main")
+        root.resolve("scratch_git.txt").writeText("ADD:\n$addRes\nCOMMIT:\n$commitRes\nPUSH:\n$pushRes")
     }
 }
+
 
 
 

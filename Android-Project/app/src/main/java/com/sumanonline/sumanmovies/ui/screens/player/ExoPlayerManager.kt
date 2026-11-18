@@ -674,6 +674,24 @@ class ExoPlayerManager(private val context: Context) {
         _playbackState.value = _playbackState.value.copy(playbackSpeed = speed)
     }
 
+    fun setVolume(volume: Float) {
+        exoPlayer?.volume = volume.coerceIn(0f, 1f)
+    }
+
+    fun getVolume(): Float = exoPlayer?.volume ?: 1f
+
+    fun toggleMute(): Boolean {
+        val player = exoPlayer ?: return false
+        val current = player.volume
+        return if (current > 0f) {
+            player.volume = 0f
+            true
+        } else {
+            player.volume = 1f
+            false
+        }
+    }
+
     fun release() {
         exoPlayer?.release()
         exoPlayer = null
