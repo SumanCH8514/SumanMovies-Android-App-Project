@@ -41,9 +41,18 @@ class MainActivity : ComponentActivity() {
 
         val app = application as SumanMoviesApp
         val repo = app.mediaRepository
+        val prefs = app.preferencesManager
+        val updateMgr = app.updateManager
 
         setContent {
-            val customizationViewModel: CustomizationViewModel = viewModel()
+            val customizationViewModel: CustomizationViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                        return CustomizationViewModel(prefs) as T
+                    }
+                }
+            )
             val customState by customizationViewModel.uiState.collectAsState()
             var showCinematicSplash by remember { mutableStateOf(true) }
 
@@ -53,7 +62,7 @@ class MainActivity : ComponentActivity() {
                 AppearanceMode.DEVICE -> isSystemInDarkTheme()
             }
 
-            SumanMoviesTheme(accent = customState.selectedAccent) {
+            SumanMoviesTheme(accent = customState.selectedAccent, isDark = isDark) {
                 val navController = rememberNavController()
 
                 val homeViewModel: HomeViewModel = viewModel(
@@ -92,13 +101,20 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
-                val profileViewModel: ProfileViewModel = viewModel()
+                val profileViewModel: ProfileViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                            return ProfileViewModel(repo, prefs, updateMgr) as T
+                        }
+                    }
+                )
 
                 val settingsViewModel: SettingsViewModel = viewModel(
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                            return SettingsViewModel(repo) as T
+                            return SettingsViewModel(repo, prefs, updateMgr) as T
                         }
                     }
                 )

@@ -1,6 +1,10 @@
 package com.sumanonline.sumanmovies.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,23 +24,33 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -44,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +77,14 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
+    val context = LocalContext.current
+
+    LaunchedEffect(state.userToastMessage) {
+        state.userToastMessage?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearToastMessage()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -111,11 +134,12 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
+                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
                 ) {
                     SettingsSwitchItem(
                         icon = Icons.Default.PlayCircle,
                         title = "Auto-play next episode",
-                        subtitle = "Automatically start the next TV episode when the countdown finishes.",
+                        subtitle = "Automatically start the next TV episode when playback finishes.",
                         checked = state.autoPlayNextEpisode,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleAutoPlay() }
@@ -123,42 +147,44 @@ fun SettingsScreen(
                     SettingsDivider()
                     SettingsValueItem(
                         icon = Icons.Default.Subtitles,
-                        title = "Preferred subtitle language",
+                        title = "Preferred Subtitle Language",
+                        subtitle = "Preferred language track when available.",
                         value = state.preferredSubtitleLanguage,
-                        onClick = {}
+                        onClick = { viewModel.setShowSubtitleLanguageDialog(true) }
                     )
                     SettingsDivider()
                     SettingsSwitchItem(
                         icon = Icons.Default.ClosedCaption,
                         title = "Subtitles by default",
-                        subtitle = "Show subtitles by default when they are enabled for playback.",
+                        subtitle = "Always enable subtitles automatically on video start.",
                         checked = state.subtitlesByDefault,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleSubtitlesByDefault() }
                     )
                 }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
 
-            item {
-                SettingsSectionLabel("DOWNLOADS")
+                Spacer(modifier = Modifier.height(24.dp))
+
+                SettingsSectionLabel("STORAGE & DOWNLOADS")
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
+                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
                 ) {
                     SettingsValueItem(
                         icon = Icons.Default.Speed,
-                        title = "Download quality",
+                        title = "Default Download Quality",
+                        subtitle = "Target quality format for one-click downloading.",
                         value = state.downloadQuality,
-                        onClick = {}
+                        onClick = { viewModel.setShowDownloadQualityDialog(true) }
                     )
                     SettingsDivider()
                     SettingsSwitchItem(
                         icon = Icons.Default.Delete,
-                        title = "Auto-delete watched downloads",
-                        subtitle = "Remove an offline download after you watch at least 90% of it.",
+                        title = "Auto-delete finished downloads",
+                        subtitle = "Remove media files from storage once marked completed.",
                         checked = state.autoDeleteWatchedDownloads,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleAutoDeleteDownloads() }
@@ -166,8 +192,8 @@ fun SettingsScreen(
                     SettingsDivider()
                     SettingsSwitchItem(
                         icon = Icons.Default.Wifi,
-                        title = "Wi-Fi only",
-                        subtitle = "Only prepare downloads when connected to Wi-Fi or Ethernet.",
+                        title = "Download over Wi-Fi only",
+                        subtitle = "Prevent downloads over cellular data connections.",
                         checked = state.wifiOnly,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleWifiOnly() }
@@ -175,48 +201,42 @@ fun SettingsScreen(
                     SettingsDivider()
                     SettingsValueItem(
                         icon = Icons.Default.Folder,
-                        title = "Downloads folder",
-                        subtitle = "Name of the folder inside Download where finished do...",
+                        title = "Download folder",
+                        subtitle = "Storage directory on device.",
                         value = state.downloadsFolder,
-                        onClick = {}
+                        onClick = { }
                     )
                     SettingsDivider()
                     SettingsValueItem(
                         icon = Icons.Default.Storage,
-                        title = "Download storage",
+                        title = "Downloads storage",
+                        subtitle = "Total disk space occupied by downloads.",
                         value = state.downloadStorage,
-                        onClick = {}
+                        onClick = { viewModel.refreshStorageMetrics() }
                     )
                 }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
 
-            item {
-                SettingsSectionLabel("STORAGE")
+                Spacer(modifier = Modifier.height(24.dp))
+
+                SettingsSectionLabel("CACHE & HISTORY")
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
+                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
                 ) {
-                    SettingsValueItem(
-                        icon = Icons.Default.Storage,
-                        title = "Cache size",
-                        value = state.cacheSize,
-                        onClick = {}
-                    )
-                    SettingsDivider()
                     SettingsActionItem(
-                        icon = Icons.Default.Delete,
-                        title = "Clear Image Cache",
-                        subtitle = "Free up space used by cached artwork",
-                        color = Color(0xFFEF4444),
+                        icon = Icons.Default.Storage,
+                        title = "Clear Image & Network Cache",
+                        subtitle = "Reclaim temporary cache storage (${state.cacheSize}).",
+                        color = TextPrimary,
                         onClick = { viewModel.clearImageCache() }
                     )
                     SettingsDivider()
                     SettingsActionItem(
                         icon = Icons.Default.Search,
-                        title = "Clear search history",
+                        title = "Clear Search History",
                         subtitle = "Remove your saved search queries from this device.",
                         color = Color(0xFFEF4444),
                         onClick = { viewModel.clearSearchHistory() }
@@ -224,10 +244,69 @@ fun SettingsScreen(
                     SettingsDivider()
                     SettingsActionItem(
                         icon = Icons.Default.History,
-                        title = "Clear History",
+                        title = "Clear Watch History",
                         subtitle = "Reset all progress and watch records.",
                         color = Color(0xFFEF4444),
                         onClick = { viewModel.clearWatchHistory() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                SettingsSectionLabel("UPDATES & ABOUT")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(CardElevated)
+                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (!state.isCheckingForUpdates) {
+                                    viewModel.checkForUpdates("1.0.0")
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Check for Updates", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (state.isCheckingForUpdates) "Checking GitHub for new releases..." else "Version 1.0.0 • Tap to check GitHub releases",
+                                color = TextMuted,
+                                fontSize = 11.sp
+                            )
+                        }
+                        if (state.isCheckingForUpdates) {
+                            CircularProgressIndicator(color = accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        } else {
+                            Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    SettingsDivider()
+                    SettingsActionItem(
+                        icon = Icons.Default.Public,
+                        title = "GitHub Repository",
+                        subtitle = "SumanMovies-Android-App-Project",
+                        color = TextPrimary,
+                        onClick = {
+                            val intent = Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://github.com/SumanCH8514/SumanMovies-Android-App-Project")
+                            )
+                            context.startActivity(intent)
+                        }
                     )
                 }
 
@@ -247,6 +326,148 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (state.showSubtitleLanguageDialog) {
+        val languages = listOf("English", "Hindi", "Spanish", "French", "Arabic", "German", "Japanese", "None")
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowSubtitleLanguageDialog(false) },
+            title = {
+                Text(text = "Preferred Subtitle Language", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    languages.forEach { lang ->
+                        val isSelected = state.preferredSubtitleLanguage.equals(lang, ignoreCase = true)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) accent.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { viewModel.setPreferredSubtitleLanguage(lang) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = lang, color = if (isSelected) accent else TextPrimary, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            if (isSelected) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setShowSubtitleLanguageDialog(false) }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showDownloadQualityDialog) {
+        val qualities = listOf(
+            "Auto (Best Available)",
+            "4K Ultra HD (2160p)",
+            "Full HD (1080p)",
+            "Standard HD (720p)",
+            "Data Saver (480p)"
+        )
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowDownloadQualityDialog(false) },
+            title = {
+                Text(text = "Default Download Quality", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    qualities.forEach { q ->
+                        val isSelected = state.downloadQuality == q
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) accent.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { viewModel.setDownloadQuality(q) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = q, color = if (isSelected) accent else TextPrimary, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            if (isSelected) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setShowDownloadQualityDialog(false) }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showUpdateDialog && state.updateInfo != null) {
+        val info = state.updateInfo!!
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateDialog() },
+            title = {
+                Text(text = "New Update Available! 🎉", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
+            },
+            text = {
+                Column {
+                    Text(text = "A new release of SumanMovies is available on GitHub.", color = TextSecondary, fontSize = 13.5.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = "Latest: v${info.latestVersion}  (Current: v${info.currentVersion})", color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    if (info.releaseNotes.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = info.releaseNotes.take(300), color = TextMuted, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.dismissUpdateDialog()
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = accent)
+                ) {
+                    Text("Download now", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { viewModel.dismissUpdateDialog() }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showUpToDateDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateDialog() },
+            title = {
+                Text(text = "You're Up to Date", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Text(text = "SumanMovies v1.0.0 is the latest version available on GitHub.", color = TextSecondary, fontSize = 13.5.sp)
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.dismissUpdateDialog() },
+                    colors = ButtonDefaults.buttonColors(containerColor = accent)
+                ) {
+                    Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
     }
 }
 

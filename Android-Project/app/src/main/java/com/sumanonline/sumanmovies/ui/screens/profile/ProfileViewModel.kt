@@ -65,17 +65,17 @@ class ProfileViewModel(
             }
         }
         viewModelScope.launch {
-            repository.getAllFavorites().collectLatest { list ->
+            repository.getFavoritesFlow().collectLatest { list ->
                 _uiState.value = _uiState.value.copy(bookmarksCount = list.size)
             }
         }
         viewModelScope.launch {
-            repository.getWatchHistory().collectLatest { list ->
+            repository.getAllHistoryFlow().collectLatest { list ->
                 _uiState.value = _uiState.value.copy(historyCount = list.size)
             }
         }
         viewModelScope.launch {
-            repository.getDownloads().collectLatest { list ->
+            repository.getDownloadsFlow().collectLatest { list ->
                 _uiState.value = _uiState.value.copy(downloadsCount = list.size)
             }
         }
