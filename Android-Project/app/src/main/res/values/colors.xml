@@ -1,0 +1,13 @@
+<resources>
+    <color name="black">#FF08080A</color>
+    <color name="surface_dark">#FF121217</color>
+    <color name="surface_card">#FF1B1B22</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="royal_indigo">#FF4F46E5</color>
+    <color name="royal_indigo_variant">#FF6366F1</color>
+    <color name="sumanmovies_navy">#FF030C2A</color>
+    <color name="sumanmovies_blue">#FF087BFF</color>
+    <color name="sumanmovies_cyan">#FF00C8FF</color>
+    <color name="sumanmovies_orange">#FFFF8A00</color>
+    <color name="sumanmovies_gold">#FFFFD21A</color>
+</resources>

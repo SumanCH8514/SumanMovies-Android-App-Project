@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="sumanmovies_navy">#030C2A</color>
+    <color name="sumanmovies_blue">#087BFF</color>
+    <color name="sumanmovies_cyan">#00C8FF</color>
+    <color name="sumanmovies_orange">#FF8A00</color>
+    <color name="sumanmovies_gold">#FFD21A</color>
+</resources>

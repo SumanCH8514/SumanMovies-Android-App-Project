@@ -1,0 +1,40 @@
+# User Excluded Files & Folders
+MOVIEBOX_CDN_ANALYSIS_REPORT.md
+MovieBox-Tui/
+
+# Node & Backend
+**/node_modules/
+**/.wrangler/
+**/dist/
+**/.dev.vars
+**/.env
+**/.env.*
+
+# Android / Gradle / Build
+**/.gradle/
+**/.kotlin/
+**/.idea/
+**/build/
+**/captures/
+**/.externalNativeBuild/
+**/.cxx/
+**/local.properties
+local.properties
+**/*.iml
+*.iml
+
+# Keystores & Signing Keys
+**/*.jks
+**/*.keystore
+**/*.p8
+**/*.p12
+**/*.key
+**/*.pem
+
+# Temporary & Logs
+.DS_Store
+Thumbs.db
+*.log
+scratch_git.txt
+scratch_git_err.txt
+

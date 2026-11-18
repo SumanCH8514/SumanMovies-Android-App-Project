@@ -1,0 +1,200 @@
+package com.sumanonline.sumanmovies.ui.screens.home
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
+import com.sumanonline.sumanmovies.data.models.MediaItem
+import com.sumanonline.sumanmovies.data.repository.MediaRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+
+data class HomeUiState(
+    val selectedCategory: String = "Movies",
+    val heroItem: MediaItem? = null,
+    val isHeroBookmarked: Boolean = false,
+    val continueWatching: List<WatchHistoryEntity> = emptyList(),
+
+    val trendingMovies: List<MediaItem> = emptyList(),
+    val indianMovies: List<MediaItem> = emptyList(),
+    val popularMovies: List<MediaItem> = emptyList(),
+    val nowPlaying: List<MediaItem> = emptyList(),
+    val topRated: List<MediaItem> = emptyList(),
+
+    val trendingTv: List<MediaItem> = emptyList(),
+    val indianTv: List<MediaItem> = emptyList(),
+    val hollywoodTv: List<MediaItem> = emptyList(),
+    val koreanTv: List<MediaItem> = emptyList(),
+    val chineseTv: List<MediaItem> = emptyList(),
+    val turkishTv: List<MediaItem> = emptyList(),
+    val popularTv: List<MediaItem> = emptyList(),
+    val airingToday: List<MediaItem> = emptyList(),
+
+    val trendingAnime: List<MediaItem> = emptyList(),
+    val newSeasonAnime: List<MediaItem> = emptyList(),
+    val popularAnime: List<MediaItem> = emptyList(),
+    val japaneseAnime: List<MediaItem> = emptyList(),
+    val chineseAnime: List<MediaItem> = emptyList(),
+
+    val kDrama: List<MediaItem> = emptyList(),
+    val chineseDrama: List<MediaItem> = emptyList(),
+    val indianDrama: List<MediaItem> = emptyList(),
+    val turkishDrama: List<MediaItem> = emptyList(),
+    val pakistaniDrama: List<MediaItem> = emptyList(),
+    val popularDramas: List<MediaItem> = emptyList(),
+
+    val isLoading: Boolean = true
+)
+
+class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
+    private val _uiState = MutableStateFlow(HomeUiState())
+    val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    val categories = listOf("Movies", "Series", "Anime", "Drama")
+
+    init {
+        loadData()
+        observeContinueWatching()
+    }
+
+    private fun observeContinueWatching() {
+        viewModelScope.launch {
+            repository.getContinueWatchingFlow().collectLatest { list ->
+                _uiState.value = _uiState.value.copy(continueWatching = list)
+            }
+        }
+    }
+
+    fun selectCategory(cat: String) {
+        val hero = when (cat) {
+            "Movies" -> _uiState.value.trendingMovies.firstOrNull() ?: _uiState.value.popularMovies.firstOrNull()
+            "Series" -> _uiState.value.trendingTv.firstOrNull() ?: _uiState.value.popularTv.firstOrNull()
+            "Anime" -> _uiState.value.trendingAnime.firstOrNull() ?: _uiState.value.japaneseAnime.firstOrNull()
+            "Drama" -> _uiState.value.kDrama.firstOrNull() ?: _uiState.value.popularDramas.firstOrNull()
+            else -> _uiState.value.trendingMovies.firstOrNull()
+        }
+        _uiState.value = _uiState.value.copy(
+            selectedCategory = cat,
+            heroItem = hero ?: _uiState.value.heroItem
+        )
+    }
+
+    fun toggleBookmarkHero() {
+        val hero = _uiState.value.heroItem ?: return
+        viewModelScope.launch {
+            repository.toggleFavorite(hero)
+            _uiState.value = _uiState.value.copy(isHeroBookmarked = !_uiState.value.isHeroBookmarked)
+        }
+    }
+
+    fun loadData() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+
+            try {
+                coroutineScope {
+
+                    val trendingMoviesDef = async(Dispatchers.IO) { repository.getTrendingMovies() }
+                    val indianMoviesDef = async(Dispatchers.IO) { repository.getIndianMovies() }
+                    val popularMoviesDef = async(Dispatchers.IO) { repository.getPopularMovies() }
+                    val nowPlayingDef = async(Dispatchers.IO) { repository.getNowPlayingMovies() }
+                    val topRatedDef = async(Dispatchers.IO) { repository.getTopRatedMovies() }
+
+                    val trendingTvDef = async(Dispatchers.IO) { repository.getTrendingTv() }
+                    val indianTvDef = async(Dispatchers.IO) { repository.getIndianTv() }
+                    val hollywoodTvDef = async(Dispatchers.IO) { repository.getHollywoodTv() }
+                    val koreanTvDef = async(Dispatchers.IO) { repository.getKoreanTv() }
+                    val chineseTvDef = async(Dispatchers.IO) { repository.getChineseTv() }
+                    val turkishTvDef = async(Dispatchers.IO) { repository.getTurkishTv() }
+                    val popularTvDef = async(Dispatchers.IO) { repository.getPopularTv() }
+                    val airingTodayDef = async(Dispatchers.IO) { repository.getAiringTodayTv() }
+
+                    val trendingAnimeDef = async(Dispatchers.IO) { repository.getTrendingAnime() }
+                    val newSeasonAnimeDef = async(Dispatchers.IO) { repository.getNewSeasonAnime() }
+                    val popularAnimeDef = async(Dispatchers.IO) { repository.getPopularAnime() }
+                    val japaneseAnimeDef = async(Dispatchers.IO) { repository.getJapaneseAnime() }
+                    val chineseAnimeDef = async(Dispatchers.IO) { repository.getChineseAnime() }
+
+                    val kDramaDef = async(Dispatchers.IO) { repository.getKDrama() }
+                    val chineseDramaDef = async(Dispatchers.IO) { repository.getChineseDrama() }
+                    val indianDramaDef = async(Dispatchers.IO) { repository.getIndianDrama() }
+                    val turkishDramaDef = async(Dispatchers.IO) { repository.getTurkishDrama() }
+                    val pakistaniDramaDef = async(Dispatchers.IO) { repository.getPakistaniDrama() }
+                    val popularDramasDef = async(Dispatchers.IO) { repository.getPopularDramas() }
+
+                    val trendingMovies = trendingMoviesDef.await()
+                    val hero = trendingMovies.firstOrNull()
+
+                    _uiState.value = _uiState.value.copy(
+                        heroItem = hero,
+                        trendingMovies = trendingMovies,
+                        isLoading = false
+                    )
+
+                    val indianMovies = indianMoviesDef.await()
+                    val popularMovies = popularMoviesDef.await()
+                    val nowPlaying = nowPlayingDef.await()
+                    val topRated = topRatedDef.await()
+
+                    val trendingTv = trendingTvDef.await()
+                    val indianTv = indianTvDef.await()
+                    val hollywoodTv = hollywoodTvDef.await()
+                    val koreanTv = koreanTvDef.await()
+                    val chineseTv = chineseTvDef.await()
+                    val turkishTv = turkishTvDef.await()
+                    val popularTv = popularTvDef.await()
+                    val airingToday = airingTodayDef.await()
+
+                    val trendingAnime = trendingAnimeDef.await()
+                    val newSeasonAnime = newSeasonAnimeDef.await()
+                    val popularAnime = popularAnimeDef.await()
+                    val japaneseAnime = japaneseAnimeDef.await()
+                    val chineseAnime = chineseAnimeDef.await()
+
+                    val kDrama = kDramaDef.await()
+                    val chineseDrama = chineseDramaDef.await()
+                    val indianDrama = indianDramaDef.await()
+                    val turkishDrama = turkishDramaDef.await()
+                    val pakistaniDrama = pakistaniDramaDef.await()
+                    val popularDramas = popularDramasDef.await()
+
+                    _uiState.value = _uiState.value.copy(
+                        heroItem = hero ?: popularMovies.firstOrNull(),
+                        trendingMovies = trendingMovies,
+                        indianMovies = indianMovies,
+                        popularMovies = popularMovies,
+                        nowPlaying = nowPlaying,
+                        topRated = topRated,
+                        trendingTv = trendingTv,
+                        indianTv = indianTv,
+                        hollywoodTv = hollywoodTv,
+                        koreanTv = koreanTv,
+                        chineseTv = chineseTv,
+                        turkishTv = turkishTv,
+                        popularTv = popularTv,
+                        airingToday = airingToday,
+                        trendingAnime = trendingAnime,
+                        newSeasonAnime = newSeasonAnime,
+                        popularAnime = popularAnime,
+                        japaneseAnime = japaneseAnime,
+                        chineseAnime = chineseAnime,
+                        kDrama = kDrama,
+                        chineseDrama = chineseDrama,
+                        indianDrama = indianDrama,
+                        turkishDrama = turkishDrama,
+                        pakistaniDrama = pakistaniDrama,
+                        popularDramas = popularDramas,
+                        isLoading = false
+                    )
+                }
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+}
