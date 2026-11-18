@@ -19,15 +19,26 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.LocalMovies
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -173,30 +184,48 @@ fun VerticalPosterCard(
 fun ContinueWatchingCard(
     item: WatchHistoryEntity,
     onResumeClick: () -> Unit,
+    onInfoClick: () -> Unit,
+    onMarkWatchedClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onRestartClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val accent = LocalAppAccent.current.color
-    val progress = if (item.durationMs > 0) item.positionMs.toFloat() / item.durationMs else 0f
+    var menuExpanded by remember { mutableStateOf(false) }
 
-    val totalSec = item.durationMs / 1000
-    val totalMin = totalSec / 60
-    val totalHour = totalMin / 60
-    val durationFormatted = if (totalHour > 0) {
-        String.format("%d:%02d:%02d", totalHour, totalMin % 60, totalSec % 60)
+    val progress = if (item.durationMs > 0) {
+        (item.positionMs.toFloat() / item.durationMs).coerceIn(0f, 1f)
     } else {
-        String.format("%d:%02d", totalMin, totalSec % 60)
+        0f
+    }
+
+    val remainingMs = (item.durationMs - item.positionMs).coerceAtLeast(0L)
+    val remMin = (remainingMs / 1000) / 60
+    val remHours = remMin / 60
+    val remainingFormatted = if (item.durationMs > 0) {
+        if (remHours > 0) "${remHours}h ${remMin % 60}m left" else "${remMin}m left"
+    } else {
+        val pct = (progress * 100).toInt()
+        if (pct > 0) "$pct% watched" else "In progress"
+    }
+
+    val isSeries = item.mediaType.equals("SERIES", ignoreCase = true) || item.mediaType.equals("ANIME", ignoreCase = true)
+    val subtitleText = if (isSeries) {
+        "S${item.seasonNumber} • E${item.episodeNumber} • $remainingFormatted"
+    } else {
+        "Movie • $remainingFormatted"
     }
 
     Column(
         modifier = modifier
-            .width(220.dp)
+            .width(225.dp)
             .clickable { onResumeClick() }
     ) {
         Box(
             modifier = Modifier
-                .width(220.dp)
-                .height(124.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .width(225.dp)
+                .height(128.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(CardDark)
         ) {
             if (!item.posterUrl.isNullOrBlank()) {
@@ -211,7 +240,15 @@ fun ContinueWatchingCard(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.75f)
+                            )
+                        )
+                    )
             )
 
             Box(
@@ -230,17 +267,163 @@ fun ContinueWatchingCard(
                 )
             }
 
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .clickable { menuExpanded = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "Options",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    modifier = Modifier
+                        .background(CardElevated)
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(14.dp))
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Resume",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = accent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onResumeClick()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Play from Beginning",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Replay,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onRestartClick()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Details & Info",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onInfoClick()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Mark as Watched",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onMarkWatchedClick()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Remove from List",
+                                color = Color(0xFFEF4444),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = null,
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onDeleteClick()
+                        }
+                    )
+                }
+            }
+
             if (item.durationMs > 0) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 8.dp, bottom = 12.dp)
+                        .padding(end = 8.dp, bottom = 10.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color.Black.copy(alpha = 0.75f))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = durationFormatted,
+                        text = remainingFormatted,
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
@@ -251,32 +434,57 @@ fun ContinueWatchingCard(
                     progress = { progress },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp)
+                        .height(3.5.dp)
                         .align(Alignment.BottomCenter),
                     color = accent,
-                    trackColor = Color.White.copy(alpha = 0.2f)
+                    trackColor = Color.White.copy(alpha = 0.22f)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(7.dp))
 
-        Text(
-            text = item.title,
-            color = TextPrimary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        Text(
-            text = "S${item.seasonNumber}.E${item.episodeNumber}",
-            color = TextMuted,
-            fontSize = 11.sp,
-            maxLines = 1
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.title,
+                    color = TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitleText,
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
+}
+
+@Composable
+fun ContinueWatchingCard(
+    item: WatchHistoryEntity,
+    onResumeClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ContinueWatchingCard(
+        item = item,
+        onResumeClick = onResumeClick,
+        onInfoClick = onResumeClick,
+        onMarkWatchedClick = {},
+        onDeleteClick = {},
+        modifier = modifier
+    )
 }
 
 @Composable

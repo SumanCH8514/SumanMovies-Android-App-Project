@@ -78,6 +78,17 @@ class MediaRepository(
         database.watchHistoryDao().insertOrUpdate(entity)
     }
 
+    suspend fun getWatchProgress(id: String): WatchHistoryEntity? {
+        return database.watchHistoryDao().getProgress(id)
+    }
+
+    suspend fun resetWatchProgress(id: String) {
+        val existing = database.watchHistoryDao().getProgress(id)
+        if (existing != null) {
+            database.watchHistoryDao().insertOrUpdate(existing.copy(positionMs = 0L, isCompleted = false))
+        }
+    }
+
     suspend fun markCompleted(id: String, completed: Boolean) {
         database.watchHistoryDao().markCompleted(id, completed)
     }

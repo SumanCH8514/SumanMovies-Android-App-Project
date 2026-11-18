@@ -48,7 +48,7 @@ class CustomizationViewModel(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = CustomizationUiState(
             appearanceMode = preferencesManager.appearanceMode.value,
             homeTabsStyle = preferencesManager.homeTabsStyle.value,

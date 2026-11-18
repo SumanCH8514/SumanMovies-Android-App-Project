@@ -52,6 +52,9 @@ import com.sumanonline.sumanmovies.ui.theme.TextMuted
 import com.sumanonline.sumanmovies.ui.theme.TextPrimary
 import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.MaterialTheme
+
 @Composable
 fun CustomizationScreen(
     viewModel: CustomizationViewModel,
@@ -64,7 +67,7 @@ fun CustomizationScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(BgDark)
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
     ) {
         Row(
@@ -78,12 +81,12 @@ fun CustomizationScreen(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(CardElevated)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowBack,
                     contentDescription = "Back",
-                    tint = TextPrimary,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -92,7 +95,7 @@ fun CustomizationScreen(
 
             Text(
                 text = "App Customization",
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -108,7 +111,11 @@ fun CustomizationScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardElevated)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            RoundedCornerShape(14.dp)
+                        )
                 ) {
                     RadioOptionItem(
                         icon = Icons.Default.PhoneAndroid,
@@ -146,7 +153,11 @@ fun CustomizationScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardElevated)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            RoundedCornerShape(14.dp)
+                        )
                 ) {
                     RadioOptionItem(
                         icon = Icons.Default.ViewCarousel,
@@ -173,7 +184,7 @@ fun CustomizationScreen(
                 SectionLabel(title = "ACCENT COLORS")
                 Text(
                     text = "Select your preferred highlight color across the app",
-                    color = TextMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
                 )
@@ -206,7 +217,11 @@ fun CustomizationScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardElevated)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            RoundedCornerShape(14.dp)
+                        )
                         .padding(14.dp)
                 ) {
                     Row(
@@ -216,21 +231,21 @@ fun CustomizationScreen(
                         Icon(
                             imageVector = Icons.Default.Movie,
                             contentDescription = null,
-                            tint = TextPrimary,
+                            tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Apply palette to player",
-                                color = TextPrimary,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Color the player controls with your accent palette. Turn off for the classic white player.",
-                                color = TextMuted,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp
                             )
                         }
@@ -249,7 +264,7 @@ fun CustomizationScreen(
                 SectionLabel(title = "APP & METADATA LANGUAGE")
                 Text(
                     text = "Content metadata, titles, and genres will refresh in selected language.",
-                    color = TextMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
                 )
@@ -258,7 +273,11 @@ fun CustomizationScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardElevated)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            RoundedCornerShape(14.dp)
+                        )
                 ) {
                     listOf(
                         Pair("en-US", "English (TMDB: en-US)"),
@@ -288,7 +307,7 @@ fun CustomizationScreen(
                 ) {
                     Text(
                         text = "✦ All preferences saved automatically to local storage",
-                        color = TextMuted,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
                     )
                 }
@@ -301,7 +320,7 @@ fun CustomizationScreen(
 private fun SectionLabel(title: String) {
     Text(
         text = title,
-        color = TextMuted,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.sp,
@@ -315,7 +334,7 @@ private fun DividerLine() {
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(BgDark)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
     )
 }
 
@@ -338,14 +357,14 @@ private fun RadioOptionItem(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = TextPrimary,
+            tint = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.size(20.dp)
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(text = title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Spacer(modifier = Modifier.height(2.dp))
-            Text(text = subtitle, color = TextMuted, fontSize = 11.sp)
+            Text(text = subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
         if (isSelected) {
             Box(
@@ -377,9 +396,10 @@ private fun AccentColorCard(
         modifier = modifier
             .height(56.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(CardElevated)
-            .then(
-                if (isSelected) Modifier.border(2.dp, accent.color, RoundedCornerShape(12.dp)) else Modifier
+            .background(MaterialTheme.colorScheme.surface)
+            .border(
+                if (isSelected) BorderStroke(2.dp, accent.color) else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                RoundedCornerShape(12.dp)
             )
             .clickable { onClick() }
             .padding(horizontal = 12.dp),
@@ -398,7 +418,7 @@ private fun AccentColorCard(
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = accent.displayName,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)

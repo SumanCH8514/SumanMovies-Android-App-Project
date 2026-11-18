@@ -42,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -94,7 +95,7 @@ fun ProfileScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(BgDark)
+            .background(MaterialTheme.colorScheme.background)
             .padding(top = topPadding)
             .padding(horizontal = 16.dp)
     ) {
@@ -320,12 +321,12 @@ fun ProfileScreen(
 
                 ProfileListItem(
                     icon = Icons.Default.Public,
-                    title = "GitHub Project",
-                    subtitle = "SumanMovies-Android-App-Project",
+                    title = "Visit website",
+                    subtitle = "https://v1.cinema.sumanonline.com/",
                     onClick = {
                         val browserIntent = Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse("https://github.com/SumanCH8514/SumanMovies-Android-App-Project")
+                            Uri.parse("https://v1.cinema.sumanonline.com/")
                         )
                         context.startActivity(browserIntent)
                     }

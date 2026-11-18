@@ -1,7 +1,10 @@
 package com.sumanonline.sumanmovies.ui.components
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,8 +30,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,15 +43,129 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sumanonline.sumanmovies.data.models.MediaItem
-import com.sumanonline.sumanmovies.ui.theme.BgDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
 import com.sumanonline.sumanmovies.ui.theme.TextPrimary
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+@Composable
+fun HeroBannerCarousel(
+    items: List<MediaItem>,
+    isBookmarked: (MediaItem) -> Boolean,
+    onPlayClick: (MediaItem) -> Unit,
+    onBookmarkClick: (MediaItem) -> Unit,
+    onInfoClick: (MediaItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (items.isEmpty()) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(440.dp)
+                .background(MaterialTheme.colorScheme.background)
+        )
+        return
+    }
+
+    val accent = LocalAppAccent.current.color
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { items.size }
+    )
+    val coroutineScope = rememberCoroutineScope()
+    val isDragged by pagerState.interactionSource.collectIsDraggedAsState()
+
+    LaunchedEffect(items) {
+        if (items.isNotEmpty()) {
+            pagerState.scrollToPage(0)
+        }
+    }
+
+    LaunchedEffect(items.size, isDragged) {
+        if (items.size > 1 && !isDragged) {
+            while (true) {
+                delay(6000L)
+                if (!pagerState.isScrollInProgress && !isDragged) {
+                    val nextPage = (pagerState.currentPage + 1) % items.size
+                    pagerState.animateScrollToPage(
+                        page = nextPage,
+                        animationSpec = tween(durationMillis = 650)
+                    )
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(440.dp)
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            key = { index -> items.getOrNull(index)?.id ?: index.toString() }
+        ) { page ->
+            val item = items.getOrNull(page)
+            if (item != null) {
+                HeroSlide(
+                    item = item,
+                    isBookmarked = isBookmarked(item),
+                    onPlayClick = { onPlayClick(item) },
+                    onBookmarkClick = { onBookmarkClick(item) },
+                    onInfoClick = { onInfoClick(item) }
+                )
+            }
+        }
+
+        if (items.size > 1) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items.indices.forEach { index ->
+                    val isSelected = pagerState.currentPage == index
+                    val dotWidth by animateDpAsState(
+                        targetValue = if (isSelected) 18.dp else 5.dp,
+                        animationSpec = tween(durationMillis = 300),
+                        label = "heroDotWidth"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .clickable {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            }
+                            .padding(horizontal = 3.dp, vertical = 6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .height(4.dp)
+                                .width(dotWidth)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(
+                                    if (isSelected) accent else TextMuted.copy(alpha = 0.45f)
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun HeroBannerCarousel(
@@ -53,24 +176,38 @@ fun HeroBannerCarousel(
     onInfoClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accent = LocalAppAccent.current.color
-    val image = item?.backdropUrl ?: item?.posterUrl
-
-    Box(
+    HeroBannerCarousel(
+        items = listOfNotNull(item),
+        isBookmarked = { isBookmarked },
+        onPlayClick = { onPlayClick() },
+        onBookmarkClick = { onBookmarkClick() },
+        onInfoClick = { onInfoClick() },
         modifier = modifier
-            .fillMaxWidth()
-            .height(440.dp)
-            .background(BgDark)
-    ) {
+    )
+}
+
+@Composable
+private fun HeroSlide(
+    item: MediaItem,
+    isBookmarked: Boolean,
+    onPlayClick: () -> Unit,
+    onBookmarkClick: () -> Unit,
+    onInfoClick: () -> Unit
+) {
+    val accent = LocalAppAccent.current.color
+    val image = item.backdropUrl ?: item.posterUrl
+
+    Box(modifier = Modifier.fillMaxSize()) {
         if (!image.isNullOrBlank()) {
             AsyncImage(
                 model = image,
-                contentDescription = item?.title,
+                contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         }
 
+        val bg = MaterialTheme.colorScheme.background
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -79,9 +216,9 @@ fun HeroBannerCarousel(
                         colors = listOf(
                             Color.Transparent,
                             Color.Transparent,
-                            BgDark.copy(alpha = 0.5f),
-                            BgDark.copy(alpha = 0.9f),
-                            BgDark
+                            bg.copy(alpha = 0.4f),
+                            bg.copy(alpha = 0.85f),
+                            bg
                         )
                     )
                 )
@@ -90,13 +227,13 @@ fun HeroBannerCarousel(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(start = 16.dp, end = 16.dp, bottom = 26.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (item?.rating != null && item.rating > 0f) {
+                if (item.rating != null && item.rating > 0f) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -120,7 +257,7 @@ fun HeroBannerCarousel(
                     }
                 }
 
-                item?.year?.let { y ->
+                item.year?.let { y ->
                     Text(
                         text = y,
                         color = TextPrimary.copy(alpha = 0.8f),
@@ -130,7 +267,7 @@ fun HeroBannerCarousel(
                 }
 
                 Text(
-                    text = if (item?.mediaType?.name == "SERIES") "Series" else "Movies",
+                    text = if (item.mediaType.name == "SERIES") "Series" else "Movies",
                     color = TextPrimary.copy(alpha = 0.8f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -140,11 +277,13 @@ fun HeroBannerCarousel(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = item?.title ?: "Discover Movies & Shows",
+                text = item.title,
                 color = TextPrimary,
                 fontWeight = FontWeight.Black,
                 fontSize = 26.sp,
-                lineHeight = 32.sp
+                lineHeight = 32.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -202,32 +341,6 @@ fun HeroBannerCarousel(
                         tint = TextPrimary,
                         modifier = Modifier.size(20.dp)
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(16.dp)
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(accent)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                repeat(4) {
-                    Box(
-                        modifier = Modifier
-                            .size(4.dp)
-                            .clip(CircleShape)
-                            .background(TextMuted.copy(alpha = 0.4f))
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
                 }
             }
         }

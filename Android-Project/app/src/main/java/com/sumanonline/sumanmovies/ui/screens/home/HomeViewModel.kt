@@ -17,7 +17,9 @@ import kotlinx.coroutines.launch
 data class HomeUiState(
     val selectedCategory: String = "Movies",
     val heroItem: MediaItem? = null,
+    val heroItems: List<MediaItem> = emptyList(),
     val isHeroBookmarked: Boolean = false,
+    val bookmarkedIds: Set<String> = emptySet(),
     val continueWatching: List<WatchHistoryEntity> = emptyList(),
 
     val trendingMovies: List<MediaItem> = emptyList(),
@@ -48,7 +50,8 @@ data class HomeUiState(
     val pakistaniDrama: List<MediaItem> = emptyList(),
     val popularDramas: List<MediaItem> = emptyList(),
 
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val userToastMessage: String? = null
 )
 
 class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
@@ -60,6 +63,7 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
     init {
         loadData()
         observeContinueWatching()
+        observeFavorites()
     }
 
     private fun observeContinueWatching() {
@@ -70,26 +74,91 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
         }
     }
 
-    fun selectCategory(cat: String) {
-        val hero = when (cat) {
-            "Movies" -> _uiState.value.trendingMovies.firstOrNull() ?: _uiState.value.popularMovies.firstOrNull()
-            "Series" -> _uiState.value.trendingTv.firstOrNull() ?: _uiState.value.popularTv.firstOrNull()
-            "Anime" -> _uiState.value.trendingAnime.firstOrNull() ?: _uiState.value.japaneseAnime.firstOrNull()
-            "Drama" -> _uiState.value.kDrama.firstOrNull() ?: _uiState.value.popularDramas.firstOrNull()
-            else -> _uiState.value.trendingMovies.firstOrNull()
+    private fun observeFavorites() {
+        viewModelScope.launch {
+            repository.getFavoritesFlow().collectLatest { favorites ->
+                val set = favorites.map { it.id }.toSet()
+                _uiState.value = _uiState.value.copy(
+                    bookmarkedIds = set,
+                    isHeroBookmarked = _uiState.value.heroItem?.let { set.contains(it.id) } ?: false
+                )
+            }
         }
+    }
+
+    private fun extractFeatured(primary: List<MediaItem>, fallback: List<MediaItem> = emptyList()): List<MediaItem> {
+        val combined = (primary + fallback).distinctBy { it.id }
+        val withBackdrop = combined.filter { !it.backdropUrl.isNullOrBlank() }
+        val result = if (withBackdrop.size >= 5) {
+            withBackdrop.take(5)
+        } else if (combined.isNotEmpty()) {
+            combined.take(5)
+        } else {
+            emptyList()
+        }
+        return result
+    }
+
+    fun selectCategory(cat: String) {
+        val items = when (cat) {
+            "Movies" -> extractFeatured(_uiState.value.trendingMovies, _uiState.value.popularMovies)
+            "Series" -> extractFeatured(_uiState.value.trendingTv, _uiState.value.popularTv)
+            "Anime" -> extractFeatured(_uiState.value.trendingAnime, _uiState.value.popularAnime)
+            "Drama" -> extractFeatured(_uiState.value.kDrama, _uiState.value.popularDramas)
+            else -> extractFeatured(_uiState.value.trendingMovies, _uiState.value.popularMovies)
+        }
+        val first = items.firstOrNull() ?: _uiState.value.heroItem
         _uiState.value = _uiState.value.copy(
             selectedCategory = cat,
-            heroItem = hero ?: _uiState.value.heroItem
+            heroItem = first,
+            heroItems = items,
+            isHeroBookmarked = first?.let { _uiState.value.bookmarkedIds.contains(it.id) } ?: false
         )
+    }
+
+    fun toggleBookmark(item: MediaItem) {
+        viewModelScope.launch {
+            repository.toggleFavorite(item)
+        }
     }
 
     fun toggleBookmarkHero() {
         val hero = _uiState.value.heroItem ?: return
+        toggleBookmark(hero)
+    }
+
+    fun removeContinueWatching(id: String) {
         viewModelScope.launch {
-            repository.toggleFavorite(hero)
-            _uiState.value = _uiState.value.copy(isHeroBookmarked = !_uiState.value.isHeroBookmarked)
+            repository.deleteWatchProgress(id)
+            _uiState.value = _uiState.value.copy(userToastMessage = "Removed from Continue Watching")
         }
+    }
+
+    fun markWatched(id: String) {
+        viewModelScope.launch {
+            repository.markCompleted(id, true)
+            _uiState.value = _uiState.value.copy(userToastMessage = "Marked as completed")
+        }
+    }
+
+    fun restartProgress(id: String) {
+        viewModelScope.launch {
+            repository.resetWatchProgress(id)
+        }
+    }
+
+    fun clearAllContinueWatching() {
+        viewModelScope.launch {
+            val current = _uiState.value.continueWatching
+            current.forEach { item ->
+                repository.deleteWatchProgress(item.id)
+            }
+            _uiState.value = _uiState.value.copy(userToastMessage = "Continue Watching cleared")
+        }
+    }
+
+    fun clearToastMessage() {
+        _uiState.value = _uiState.value.copy(userToastMessage = null)
     }
 
     fun loadData() {
@@ -98,7 +167,6 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
 
             try {
                 coroutineScope {
-
                     val trendingMoviesDef = async(Dispatchers.IO) { repository.getTrendingMovies() }
                     val indianMoviesDef = async(Dispatchers.IO) { repository.getIndianMovies() }
                     val popularMoviesDef = async(Dispatchers.IO) { repository.getPopularMovies() }
@@ -128,10 +196,12 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
                     val popularDramasDef = async(Dispatchers.IO) { repository.getPopularDramas() }
 
                     val trendingMovies = trendingMoviesDef.await()
-                    val hero = trendingMovies.firstOrNull()
+                    val heroMovies = extractFeatured(trendingMovies)
+                    val hero = heroMovies.firstOrNull()
 
                     _uiState.value = _uiState.value.copy(
                         heroItem = hero,
+                        heroItems = heroMovies,
                         trendingMovies = trendingMovies,
                         isLoading = false
                     )
@@ -163,8 +233,20 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
                     val pakistaniDrama = pakistaniDramaDef.await()
                     val popularDramas = popularDramasDef.await()
 
+                    val finalHeroItems = when (_uiState.value.selectedCategory) {
+                        "Movies" -> extractFeatured(trendingMovies, popularMovies)
+                        "Series" -> extractFeatured(trendingTv, popularTv)
+                        "Anime" -> extractFeatured(trendingAnime, popularAnime)
+                        "Drama" -> extractFeatured(kDrama, popularDramas)
+                        else -> extractFeatured(trendingMovies, popularMovies)
+                    }
+
+                    val activeHero = finalHeroItems.firstOrNull() ?: hero
+
                     _uiState.value = _uiState.value.copy(
-                        heroItem = hero ?: popularMovies.firstOrNull(),
+                        heroItem = activeHero,
+                        heroItems = finalHeroItems,
+                        isHeroBookmarked = activeHero?.let { _uiState.value.bookmarkedIds.contains(it.id) } ?: false,
                         trendingMovies = trendingMovies,
                         indianMovies = indianMovies,
                         popularMovies = popularMovies,

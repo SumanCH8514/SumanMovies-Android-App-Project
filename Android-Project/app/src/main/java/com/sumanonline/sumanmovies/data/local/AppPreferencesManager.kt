@@ -101,6 +101,7 @@ class AppPreferencesManager(private val context: Context) {
     }
 
     fun setAppearanceMode(mode: AppearanceMode) {
+        android.util.Log.d("SumanMovies", "AppPreferencesManager setAppearanceMode: $mode")
         prefs.edit().putString(KEY_APPEARANCE_MODE, mode.name).apply()
         _appearanceMode.value = mode
     }

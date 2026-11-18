@@ -9,6 +9,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 val LocalAppAccent = staticCompositionLocalOf { AppAccent.ROYAL_INDIGO }
+val LocalThemeIsDark = staticCompositionLocalOf { true }
 
 @Composable
 fun SumanMoviesTheme(
@@ -22,13 +23,13 @@ fun SumanMoviesTheme(
             onPrimary = Color.White,
             primaryContainer = accent.color.copy(alpha = 0.2f),
             onPrimaryContainer = Color.White,
-            background = BgDark,
-            onBackground = TextPrimary,
-            surface = SurfaceDark,
-            onSurface = TextPrimary,
-            surfaceVariant = CardDark,
-            onSurfaceVariant = TextSecondary,
-            outline = BorderDark
+            background = RawBgDark,
+            onBackground = RawTextPrimary,
+            surface = RawSurfaceDark,
+            onSurface = RawTextPrimary,
+            surfaceVariant = RawCardDark,
+            onSurfaceVariant = RawTextSecondary,
+            outline = RawBorderDark
         )
     } else {
         lightColorScheme(
@@ -36,17 +37,20 @@ fun SumanMoviesTheme(
             onPrimary = Color.White,
             primaryContainer = accent.color.copy(alpha = 0.15f),
             onPrimaryContainer = accent.color,
-            background = Color(0xFFF8F9FA),
-            onBackground = Color(0xFF111827),
-            surface = Color(0xFFFFFFFF),
-            onSurface = Color(0xFF111827),
-            surfaceVariant = Color(0xFFF3F4F6),
-            onSurfaceVariant = Color(0xFF4B5563),
-            outline = Color(0xFFE5E7EB)
+            background = RawBgLight,
+            onBackground = RawTextPrimaryLight,
+            surface = RawSurfaceLight,
+            onSurface = RawTextPrimaryLight,
+            surfaceVariant = RawCardElevatedLight,
+            onSurfaceVariant = RawTextSecondaryLight,
+            outline = RawBorderLight
         )
     }
 
-    CompositionLocalProvider(LocalAppAccent provides accent) {
+    CompositionLocalProvider(
+        LocalAppAccent provides accent,
+        LocalThemeIsDark provides isDark
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,

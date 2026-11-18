@@ -49,7 +49,7 @@ import com.sumanonline.sumanmovies.ui.screens.seasons.SeasonsEpisodesScreen
 import com.sumanonline.sumanmovies.ui.screens.seasons.SeasonsEpisodesViewModel
 import com.sumanonline.sumanmovies.ui.screens.settings.SettingsScreen
 import com.sumanonline.sumanmovies.ui.screens.settings.SettingsViewModel
-import com.sumanonline.sumanmovies.ui.theme.BgDark
+import androidx.compose.material3.MaterialTheme
 
 @Composable
 fun AppNavigation(
@@ -68,6 +68,7 @@ fun AppNavigation(
     val context = LocalContext.current
 
     val libraryState by libraryViewModel.uiState.collectAsState()
+    val customState by customizationViewModel.uiState.collectAsState()
     val downloadsBadgeCount = libraryState.downloads.count { it.status == "DOWNLOADING" || it.status == "COMPLETED" || it.status == "PAUSED" }
 
     val showBottomBar = when (currentRoute) {
@@ -145,7 +146,7 @@ fun AppNavigation(
                 )
             }
         },
-        containerColor = BgDark
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -159,6 +160,7 @@ fun AppNavigation(
                 composable(Screen.Home.route) {
                     HomeScreen(
                         viewModel = homeViewModel,
+                        homeTabsStyle = customState.homeTabsStyle,
                         onMediaClick = { item ->
                             navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
                         },
@@ -166,6 +168,9 @@ fun AppNavigation(
                         onSearchClick = { navController.navigate(Screen.Catalog.route) },
                         onSeeAllCategory = { catKey, title ->
                             navController.navigate(Screen.CategoryMedia.createRoute(catKey, title))
+                        },
+                        onNavigateHistory = {
+                            navController.navigate(Screen.Activity.route)
                         }
                     )
                 }

@@ -240,6 +240,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 currentStream = defaultStream
             )
 
+            val savedProgress = repository.getWatchProgress(mediaId)
+            val resumePositionMs = if (savedProgress != null && !savedProgress.isCompleted && savedProgress.positionMs > 0) {
+                savedProgress.positionMs
+            } else {
+                0L
+            }
+
             val toPrepare = defaultStream
             if (toPrepare != null) {
                 if (toPrepare.isLockerUrl) {
@@ -261,16 +268,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         )
                         if (!finalStream.format.equals("EMBED", ignoreCase = true)) {
-                            playerManager.prepareStream(finalStream, _serverSubtitles.value)
+                            playerManager.prepareStream(finalStream, _serverSubtitles.value, resumePositionMs)
                         }
                     } else {
                         if (!toPrepare.format.equals("EMBED", ignoreCase = true)) {
-                            playerManager.prepareStream(toPrepare, _serverSubtitles.value)
+                            playerManager.prepareStream(toPrepare, _serverSubtitles.value, resumePositionMs)
                         }
                     }
                 } else {
                     if (!toPrepare.format.equals("EMBED", ignoreCase = true)) {
-                        playerManager.prepareStream(toPrepare, _serverSubtitles.value)
+                        playerManager.prepareStream(toPrepare, _serverSubtitles.value, resumePositionMs)
                     }
                 }
             }

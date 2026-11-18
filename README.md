@@ -50,12 +50,18 @@ Ready-to-install debug APK built with complete hardware acceleration, multi-prov
 - Subtitle rendering and multi-track audio stream selector.
 - Double-tap seek gestures, brightness/volume swipe gestures, and screen orientation locks.
 
-### 4. Emil Kowalski Design-Engineering UI/UX
+### 4. App Customization & Dynamic Theming
+- **Appearance Modes:** Real-time switching between **Device Theme**, **Dark Mode**, and clean bright **Light Mode** with dynamic status bar and navigation bar contrast.
+- **Home Category Tab Styles:** Choose between **Segmented Control** (pill tabs directly below hero banner) or **Top Glass Bar** (glassmorphic top navigation).
+- **Accent Palettes:** 7 selectable accent themes (Royal Indigo, Crimson Red, Sunset Gold, Neon Purple, Electric Cyan, Emerald Mint, Mono).
+- **Official Web Companion:** Seamlessly linked to the official web client at [**v1.cinema.sumanonline.com**](https://v1.cinema.sumanonline.com/).
+
+### 5. Emil Kowalski Design-Engineering UI/UX
 - **8-Pixel Strict Spatial System:** Clean vertical rhythm and consistent element hierarchy.
 - **Calm Tinted Neutrals:** Eliminates harsh neon gradients in favor of refined `#131926` card surfaces on `#090D16` backdrops.
 - **Focal Point Discipline:** Dedicated Search & Discovery workflow with real persistent search history, individual entry deletion, and one-tap history wipe.
 
-### 5. Backend Serverless Proxy
+### 6. Backend Serverless Proxy
 - Cloudflare Workers microservice located in [`Backend-Project/`](Backend-Project/) responsible for token signing, API aggregation, and CORS/link resolution.
 
 ---

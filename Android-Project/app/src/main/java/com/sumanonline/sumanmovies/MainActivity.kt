@@ -53,16 +53,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             )
-            val customState by customizationViewModel.uiState.collectAsState()
+            val appearanceMode by prefs.appearanceMode.collectAsState()
+            val selectedAccent by prefs.selectedAccent.collectAsState()
             var showCinematicSplash by remember { mutableStateOf(true) }
 
-            val isDark = when (customState.appearanceMode) {
+            val isDark = when (appearanceMode) {
                 AppearanceMode.DARK -> true
                 AppearanceMode.LIGHT -> false
                 AppearanceMode.DEVICE -> isSystemInDarkTheme()
             }
+            android.util.Log.d("SumanMovies", "MainActivity recomposed: isDark=$isDark, mode=$appearanceMode, accent=$selectedAccent")
 
-            SumanMoviesTheme(accent = customState.selectedAccent, isDark = isDark) {
+            val view = androidx.compose.ui.platform.LocalView.current
+            if (!view.isInEditMode) {
+                androidx.compose.runtime.SideEffect {
+                    val window = (view.context as? android.app.Activity)?.window
+                    if (window != null) {
+                        val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, view)
+                        insetsController.isAppearanceLightStatusBars = !isDark
+                        insetsController.isAppearanceLightNavigationBars = !isDark
+                    }
+                }
+            }
+
+            SumanMoviesTheme(accent = selectedAccent, isDark = isDark) {
                 val navController = rememberNavController()
 
                 val homeViewModel: HomeViewModel = viewModel(

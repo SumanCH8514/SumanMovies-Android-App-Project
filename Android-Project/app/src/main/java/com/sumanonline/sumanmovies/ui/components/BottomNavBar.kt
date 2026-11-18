@@ -37,9 +37,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.sp
 import com.sumanonline.sumanmovies.ui.navigation.Screen
-import com.sumanonline.sumanmovies.ui.theme.BgDark
 import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
@@ -78,13 +78,13 @@ fun BottomNavBar(
             .fillMaxWidth()
             .drawBehind {
                 drawLine(
-                    color = BorderDark.copy(alpha = 0.5f),
+                    color = Color.Gray.copy(alpha = 0.25f),
                     start = Offset(0f, 0f),
                     end = Offset(size.width, 0f),
                     strokeWidth = 1f
                 )
             }
-            .background(BgDark)
+            .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
             .height(58.dp)
     ) {
@@ -130,7 +130,7 @@ fun BottomNavBar(
                             Icon(
                                 imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
                                 contentDescription = tab.label,
-                                tint = if (isSelected) accent else TextMuted,
+                                tint = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 modifier = Modifier.size(24.dp)
                             )
                         }
@@ -138,7 +138,7 @@ fun BottomNavBar(
                         Icon(
                             imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
                             contentDescription = tab.label,
-                            tint = if (isSelected) accent else TextMuted,
+                            tint = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             modifier = Modifier.size(24.dp)
                         )
                     }
