@@ -5,10 +5,13 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.ui.theme.AppAccent
 import com.sumanonline.sumanmovies.ui.theme.SumanMoviesTheme
 
 class PlayerActivity : ComponentActivity() {
@@ -93,7 +96,12 @@ class PlayerActivity : ComponentActivity() {
         )
 
         setContent {
-            SumanMoviesTheme {
+            val prefs = (application as? SumanMoviesApp)?.preferencesManager
+            val applyPalette = prefs?.applyPaletteToPlayer?.collectAsState()?.value ?: false
+            val savedAccent = prefs?.selectedAccent?.collectAsState()?.value ?: AppAccent.ROYAL_INDIGO
+            val accent = if (applyPalette) savedAccent else AppAccent.ROYAL_INDIGO
+
+            SumanMoviesTheme(accent = accent) {
                 PlayerScreen(
                     viewModel = viewModel,
                     onBack = { finish() }

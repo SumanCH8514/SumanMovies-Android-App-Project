@@ -208,7 +208,30 @@ fun AppNavigation(
                     ProfileScreen(
                         viewModel = profileViewModel,
                         onNavigateCustomization = { navController.navigate(Screen.Customization.route) },
-                        onNavigateSettings = { navController.navigate(Screen.Settings.route) }
+                        onNavigateSettings = { navController.navigate(Screen.Settings.route) },
+                        onNavigateBookmarks = {
+                            libraryViewModel.selectTab(LibraryTab.FAVORITES)
+                            navController.navigate(Screen.Library.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onNavigateHistory = {
+                            navController.navigate(Screen.Activity.route)
+                        },
+                        onNavigateDownloads = {
+                            libraryViewModel.selectTab(LibraryTab.DOWNLOADS)
+                            navController.navigate(Screen.Library.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
                     )
                 }
 
