@@ -177,7 +177,8 @@ class DetailsViewModel(
             val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
             val actualEpisode = if (isMovie) 0 else 1
 
-            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId)
+            val yr = d.year ?: d.releaseDate?.take(4)
+            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
             val updated = _uiState.value.serverStates.toMutableMap()
             updated[server] = resolved
 
@@ -377,7 +378,8 @@ class DetailsViewModel(
             val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
             val actualEpisode = if (isMovie) 0 else 1
 
-            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId)
+            val yr = d.year ?: d.releaseDate?.take(4)
+            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
             val updated = _uiState.value.serverStates.toMutableMap()
             updated[server] = resolved
             _uiState.value = _uiState.value.copy(serverStates = updated)
@@ -441,19 +443,17 @@ class DetailsViewModel(
         }
     }
 
+    fun retry() {
+        loadDetails()
+    }
+
     private fun loadDetails() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             val d = repository.getDetails(mediaId, mediaType)
 
             val seasonsList = if (d != null && d.mediaType != MediaType.MOVIE) {
-                d.seasons.ifEmpty {
-                    listOf(
-                        Season(1, "Season 1", 8),
-                        Season(2, "Season 2", 8),
-                        Season(3, "Season 3", 8)
-                    )
-                }
+                d.seasons
             } else emptyList()
 
             _uiState.value = _uiState.value.copy(
@@ -472,7 +472,7 @@ class DetailsViewModel(
     }
 
     private fun loadEpisodes(seasonNumber: Int) {
-        val tmdbId = mediaId.toIntOrNull()
+        val tmdbId = _uiState.value.details?.tmdbId ?: mediaId.toIntOrNull()
         viewModelScope.launch {
             val eps = if (tmdbId != null) {
                 repository.getSeasonEpisodes(tmdbId, seasonNumber)
@@ -480,35 +480,7 @@ class DetailsViewModel(
                 emptyList()
             }
 
-            val finalEpisodes = if (eps.isEmpty()) {
-                val dates = listOf("Sep 1, 2022", "Sep 1, 2022", "Sep 8, 2022", "Sep 15, 2022", "Sep 22, 2022", "Sep 29, 2022", "Oct 6, 2022", "Oct 13, 2022")
-                val titles = listOf(
-                    "A Shadow of the Past",
-                    "Adrift",
-                    "Adar",
-                    "The Great Wave",
-                    "Partings",
-                    "Udûn",
-                    "The Eye",
-                    "Alloyed"
-                )
-                (1..8).map { epNum ->
-                    Episode(
-                        id = "$mediaId-$seasonNumber-$epNum",
-                        episodeNumber = epNum,
-                        seasonNumber = seasonNumber,
-                        title = titles.getOrElse(epNum - 1) { "Episode $epNum" },
-                        overview = "Galadriel is disturbed by signs of an ancient evil's return; Arondir discovers something unexpected.",
-                        stillUrl = null,
-                        durationMinutes = 66,
-                        airDate = dates.getOrElse(epNum - 1) { "2022" }
-                    )
-                }
-            } else {
-                eps
-            }
-
-            _uiState.value = _uiState.value.copy(episodes = finalEpisodes)
+            _uiState.value = _uiState.value.copy(episodes = eps)
         }
     }
 
@@ -518,7 +490,8 @@ class DetailsViewModel(
             val isMovie = _uiState.value.details?.mediaType == MediaType.MOVIE
             val actualSeason = if (isMovie) 0 else season
             val actualEpisode = if (isMovie) 0 else episode
-            val serversMap = repository.resolveAllServers(title, actualSeason, actualEpisode, mediaId)
+            val yr = _uiState.value.details?.year ?: _uiState.value.details?.releaseDate?.take(4)
+            val serversMap = repository.resolveAllServers(title, actualSeason, actualEpisode, mediaId, yr)
             val selected = _uiState.value.selectedServer
             val activeStreams = serversMap[selected]?.streams ?: emptyList()
 
@@ -596,12 +569,14 @@ class DetailsViewModel(
         val currentServer = _uiState.value.selectedServer
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isStreamsLoading = true)
+            val yr = d.year ?: d.releaseDate?.take(4)
             val resolvedState = repository.resolveServer(
                 currentServer,
                 d.title,
                 episode.seasonNumber,
                 episode.episodeNumber,
-                d.id
+                d.id,
+                yr
             )
             _uiState.value = _uiState.value.copy(isStreamsLoading = false)
             val stream = pickBestStream(resolvedState.streams)

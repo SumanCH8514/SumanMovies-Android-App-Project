@@ -19,5 +19,7 @@ data class DownloadEntity(
     val status: String = "DOWNLOADING",
     val seasonNumber: Int = 1,
     val episodeNumber: Int = 1,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val failureReason: String? = null,
+    val headersJson: String? = null
 )

@@ -3,6 +3,7 @@ package com.sumanonline.sumanmovies.ui.screens.settings
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,19 +25,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.VideoSettings
+import androidx.compose.material.icons.filled.Web
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,8 +66,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.sumanonline.sumanmovies.ui.theme.BgDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
@@ -153,6 +161,14 @@ fun SettingsScreen(
                         onClick = { viewModel.setShowSubtitleLanguageDialog(true) }
                     )
                     SettingsDivider()
+                    SettingsValueItem(
+                        icon = Icons.Default.Audiotrack,
+                        title = "Preferred Audio Language",
+                        subtitle = "Default audio language for movies & series.",
+                        value = state.preferredAudioLanguage,
+                        onClick = { viewModel.setShowAudioLanguageDialog(true) }
+                    )
+                    SettingsDivider()
                     SettingsSwitchItem(
                         icon = Icons.Default.ClosedCaption,
                         title = "Subtitles by default",
@@ -160,6 +176,40 @@ fun SettingsScreen(
                         checked = state.subtitlesByDefault,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleSubtitlesByDefault() }
+                    )
+                    SettingsDivider()
+                    SettingsValueItem(
+                        icon = Icons.Default.Speed,
+                        title = "Default Playback Speed",
+                        subtitle = "Standard speed applied when starting playback.",
+                        value = "${state.defaultPlaybackSpeed}x",
+                        onClick = { viewModel.setShowPlaybackSpeedDialog(true) }
+                    )
+                    SettingsDivider()
+                    SettingsValueItem(
+                        icon = Icons.Default.FastForward,
+                        title = "Double-Tap Seek Duration",
+                        subtitle = "Seek jump time on double-tapping player sides.",
+                        value = "${state.doubleTapSeekDuration}s",
+                        onClick = { viewModel.setShowSeekDurationDialog(true) }
+                    )
+                    SettingsDivider()
+                    SettingsSwitchItem(
+                        icon = Icons.Default.PictureInPictureAlt,
+                        title = "Background Playback",
+                        subtitle = "Continue audio playback when screen is locked or app minimized.",
+                        checked = state.backgroundPlayback,
+                        accentColor = accent,
+                        onCheckedChange = { viewModel.toggleBackgroundPlayback() }
+                    )
+                    SettingsDivider()
+                    SettingsSwitchItem(
+                        icon = Icons.Default.VideoSettings,
+                        title = "Hardware Acceleration",
+                        subtitle = "Use hardware GPU decoding for smoother video and battery savings.",
+                        checked = state.hardwareAcceleration,
+                        accentColor = accent,
+                        onCheckedChange = { viewModel.toggleHardwareAcceleration() }
                     )
                 }
 
@@ -239,7 +289,7 @@ fun SettingsScreen(
                         title = "Clear Search History",
                         subtitle = "Remove your saved search queries from this device.",
                         color = Color(0xFFEF4444),
-                        onClick = { viewModel.clearSearchHistory() }
+                        onClick = { viewModel.setShowClearSearchHistoryDialog(true) }
                     )
                     SettingsDivider()
                     SettingsActionItem(
@@ -247,7 +297,7 @@ fun SettingsScreen(
                         title = "Clear Watch History",
                         subtitle = "Reset all progress and watch records.",
                         color = Color(0xFFEF4444),
-                        onClick = { viewModel.clearWatchHistory() }
+                        onClick = { viewModel.setShowClearWatchHistoryDialog(true) }
                     )
                 }
 
@@ -296,14 +346,14 @@ fun SettingsScreen(
                     }
                     SettingsDivider()
                     SettingsActionItem(
-                        icon = Icons.Default.Public,
-                        title = "GitHub Repository",
-                        subtitle = "SumanMovies-Android-App-Project",
+                        icon = Icons.Default.Web,
+                        title = "Visit Website",
+                        subtitle = "v1.cinema.sumanonline.com • Official Web Portal",
                         color = TextPrimary,
                         onClick = {
                             val intent = Intent(
                                 Intent.ACTION_VIEW,
-                                Uri.parse("https://github.com/SumanCH8514/SumanMovies-Android-App-Project")
+                                Uri.parse("https://v1.cinema.sumanonline.com/")
                             )
                             context.startActivity(intent)
                         }
@@ -359,6 +409,122 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.setShowSubtitleLanguageDialog(false) }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showAudioLanguageDialog) {
+        val languages = listOf("English", "Hindi", "Spanish", "French", "Arabic", "German", "Japanese", "Korean", "Chinese", "Tamil", "Telugu", "Bengali")
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowAudioLanguageDialog(false) },
+            title = {
+                Text(text = "Preferred Audio Language", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    languages.forEach { lang ->
+                        val isSelected = state.preferredAudioLanguage.equals(lang, ignoreCase = true)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) accent.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { viewModel.setPreferredAudioLanguage(lang) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = lang, color = if (isSelected) accent else TextPrimary, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            if (isSelected) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setShowAudioLanguageDialog(false) }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showPlaybackSpeedDialog) {
+        val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowPlaybackSpeedDialog(false) },
+            title = {
+                Text(text = "Default Playback Speed", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    speeds.forEach { sp ->
+                        val isSelected = state.defaultPlaybackSpeed == sp
+                        val label = if (sp == 1.0f) "1.0x (Normal)" else "${sp}x"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) accent.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { viewModel.setDefaultPlaybackSpeed(sp) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = label, color = if (isSelected) accent else TextPrimary, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            if (isSelected) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setShowPlaybackSpeedDialog(false) }) {
+                    Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B1B22)
+        )
+    }
+
+    if (state.showSeekDurationDialog) {
+        val durations = listOf(5, 10, 15, 20, 30)
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowSeekDurationDialog(false) },
+            title = {
+                Text(text = "Double-Tap Seek Duration", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    durations.forEach { dur ->
+                        val isSelected = state.doubleTapSeekDuration == dur
+                        val label = if (dur == 10) "10 seconds (Default)" else "$dur seconds"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) accent.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { viewModel.setDoubleTapSeekDuration(dur) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = label, color = if (isSelected) accent else TextPrimary, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            if (isSelected) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setShowSeekDurationDialog(false) }) {
                     Text("Close", color = TextSecondary)
                 }
             },
@@ -469,6 +635,24 @@ fun SettingsScreen(
             containerColor = Color(0xFF1B1B22)
         )
     }
+
+    AnimatedConfirmClearDialog(
+        visible = state.showClearSearchHistoryDialog,
+        title = "Clear Search History?",
+        message = "Are you sure you want to remove all search queries? This cannot be undone.",
+        confirmButtonText = "Clear Search",
+        onConfirm = { viewModel.confirmClearSearchHistory() },
+        onDismiss = { viewModel.setShowClearSearchHistoryDialog(false) }
+    )
+
+    AnimatedConfirmClearDialog(
+        visible = state.showClearWatchHistoryDialog,
+        title = "Clear Watch History?",
+        message = "Are you sure you want to clear your entire watch history and playback records?",
+        confirmButtonText = "Clear History",
+        onConfirm = { viewModel.confirmClearWatchHistory() },
+        onDismiss = { viewModel.setShowClearWatchHistoryDialog(false) }
+    )
 }
 
 @Composable
@@ -518,8 +702,107 @@ private fun SettingsSwitchItem(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = accentColor,
+                checkedBorderColor = Color.Transparent,
+                uncheckedThumbColor = Color(0xFFE2E8F0),
+                uncheckedTrackColor = Color(0xFF262A36),
+                uncheckedBorderColor = Color(0xFF4A5568)
+            )
         )
+    }
+}
+
+@Composable
+private fun AnimatedConfirmClearDialog(
+    visible: Boolean,
+    title: String,
+    message: String,
+    confirmButtonText: String = "Clear Now",
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (visible) {
+        Dialog(onDismissRequest = onDismiss) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF1B1B22))
+                    .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+                    .padding(22.dp)
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = null,
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = title,
+                        color = TextPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = message,
+                        color = TextSecondary,
+                        fontSize = 13.5.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 19.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(22.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+                        ) {
+                            Text("Cancel", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                        }
+
+                        Button(
+                            onClick = onConfirm,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                        ) {
+                            Text(confirmButtonText, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

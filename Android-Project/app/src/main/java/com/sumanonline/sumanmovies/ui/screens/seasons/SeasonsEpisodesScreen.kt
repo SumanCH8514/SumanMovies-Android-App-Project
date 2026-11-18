@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,7 @@ import coil.compose.AsyncImage
 import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.ui.components.DownloadFullScreenModal
 import com.sumanonline.sumanmovies.ui.theme.BgDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
@@ -57,11 +59,12 @@ fun SeasonsEpisodesScreen(
     viewModel: SeasonsEpisodesViewModel,
     onBack: () -> Unit,
     onEpisodeClick: (MediaItem, Episode) -> Unit,
+    onNavigateToDownloads: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
     Column(
         modifier = modifier
@@ -237,7 +240,7 @@ fun SeasonsEpisodesScreen(
                                 .size(38.dp)
                                 .clip(CircleShape)
                                 .background(Color.White.copy(alpha = 0.08f))
-                                .clickable { viewModel.downloadEpisode(context, ep) },
+                                .clickable { viewModel.openDownloadModal(ep) },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -251,5 +254,31 @@ fun SeasonsEpisodesScreen(
                 }
             }
         }
+    }
+
+    if (state.showDownloadModal && state.selectedEpisodeForDownload != null) {
+        val ep = state.selectedEpisodeForDownload!!
+        val epPart = "S${ep.seasonNumber}.E${ep.episodeNumber}"
+        val epTitle = if (ep.title.isNotBlank()) " • ${ep.title}" else ""
+        val pageTitle = "${state.mediaTitle} $epPart$epTitle Download Page"
+
+        val activeServer = state.downloadModalServer
+        val currentStreams = state.serverStates[activeServer]?.streams ?: emptyList()
+
+        DownloadFullScreenModal(
+            server = activeServer,
+            pageTitle = pageTitle,
+            streams = currentStreams,
+            isLoading = state.isDownloadModalLoading,
+            resolvingStreamUrl = state.resolvingStreamUrl,
+            onSelectServer = { srv -> viewModel.selectDownloadServer(srv) },
+            onDismiss = { viewModel.closeDownloadModal() },
+            onRefresh = { viewModel.retryDownloadFetch() },
+            onDownloadStream = { stream, mirror ->
+                viewModel.downloadStreamOption(context, stream, mirror) {
+                    onNavigateToDownloads()
+                }
+            }
+        )
     }
 }

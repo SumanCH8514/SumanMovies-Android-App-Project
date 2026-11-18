@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.DefaultExtractorsFactory
+import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.util.DeviceCapabilities
@@ -295,7 +296,7 @@ class ExoPlayerManager(private val context: Context) {
             }
         }
 
-        if (result.isNotEmpty() && !isTextDisabled) {
+        if (result.isNotEmpty()) {
             val hasSelected = result.any { it.isSelected }
             if (!hasSelected && _isSubtitlesEnabled.value && player != null) {
                 val preferred = result.firstOrNull { it.language?.startsWith("en", ignoreCase = true) == true } ?: result.first()
@@ -316,7 +317,9 @@ class ExoPlayerManager(private val context: Context) {
                 _isSubtitlesEnabled.value = hasSelected
             }
         } else {
-            _subtitleTracks.value = result
+            if (_subtitleTracks.value.isEmpty()) {
+                _subtitleTracks.value = emptyList()
+            }
             if (isTextDisabled) {
                 _isSubtitlesEnabled.value = false
             }
@@ -437,15 +440,42 @@ class ExoPlayerManager(private val context: Context) {
                 }
                 .build()
         } else {
-            player.trackSelectionParameters = player.trackSelectionParameters
+            var matchedOverride: TrackSelectionOverride? = null
+            for (group in player.currentTracks.groups) {
+                if (group.type == C.TRACK_TYPE_TEXT) {
+                    for (i in 0 until group.length) {
+                        val fmt = group.getTrackFormat(i)
+                        val fmtLang = fmt.language?.lowercase()
+                        val trackLang = track.language?.lowercase()
+                        val fmtLabel = fmt.label?.lowercase()
+                        val trackLabel = track.label.lowercase()
+                        val trackDisp = track.displayName.lowercase()
+
+                        val matches = (fmtLang != null && trackLang != null && (fmtLang == trackLang || fmtLang.startsWith(trackLang) || trackLang.startsWith(fmtLang))) ||
+                                (!fmtLabel.isNullOrBlank() && (fmtLabel == trackLabel || fmtLabel == trackDisp))
+                        if (matches) {
+                            matchedOverride = TrackSelectionOverride(group.mediaTrackGroup, i)
+                            break
+                        }
+                    }
+                    if (matchedOverride != null) break
+                }
+            }
+
+            val builder = player.trackSelectionParameters
                 .buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                 .apply {
                     if (!track.language.isNullOrBlank()) {
                         setPreferredTextLanguage(track.language)
                     }
                 }
-                .build()
+
+            if (matchedOverride != null) {
+                builder.addOverride(matchedOverride)
+            }
+            player.trackSelectionParameters = builder.build()
         }
 
         _subtitleTracks.value = _subtitleTracks.value.map {
@@ -539,7 +569,48 @@ class ExoPlayerManager(private val context: Context) {
             stream.quality.contains("360") -> 640 to 360
             else -> if (supports4K) 3840 to 2160 else 1920 to 1080
         }
-        player.trackSelectionParameters = player.trackSelectionParameters
+        val appPrefs = try {
+            (context.applicationContext as? SumanMoviesApp)?.preferencesManager
+        } catch (_: Exception) { null }
+
+        val preferredAudio = appPrefs?.preferredAudioLanguage?.value
+        val audioLangCode = when (preferredAudio?.lowercase()) {
+            "english" -> "en"
+            "hindi" -> "hi"
+            "spanish" -> "es"
+            "french" -> "fr"
+            "arabic" -> "ar"
+            "german" -> "de"
+            "japanese" -> "ja"
+            "korean" -> "ko"
+            "chinese" -> "zh"
+            "tamil" -> "ta"
+            "telugu" -> "te"
+            "bengali" -> "bn"
+            else -> preferredAudio?.lowercase()
+        }
+
+        val preferredSub = appPrefs?.preferredSubtitleLanguage?.value
+        val subLangCode = when (preferredSub?.lowercase()) {
+            "english" -> "en"
+            "hindi" -> "hi"
+            "spanish" -> "es"
+            "french" -> "fr"
+            "arabic" -> "ar"
+            "german" -> "de"
+            "japanese" -> "ja"
+            "korean" -> "ko"
+            "chinese" -> "zh"
+            "tamil" -> "ta"
+            "telugu" -> "te"
+            "bengali" -> "bn"
+            else -> preferredSub?.lowercase()
+        }
+
+        val subtitlesByDefault = appPrefs?.subtitlesByDefault?.value ?: _isSubtitlesEnabled.value
+        val defaultSpeed = appPrefs?.defaultPlaybackSpeed?.value ?: 1.0f
+
+        val trackParamsBuilder = player.trackSelectionParameters
             .buildUpon()
             .setMaxVideoSize(maxW, maxH)
             .setPreferredAudioMimeTypes(
@@ -551,8 +622,20 @@ class ExoPlayerManager(private val context: Context) {
                 MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3
             )
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !_isSubtitlesEnabled.value)
-            .build()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesByDefault)
+
+        if (!audioLangCode.isNullOrBlank() && audioLangCode != "none") {
+            trackParamsBuilder.setPreferredAudioLanguage(audioLangCode)
+        }
+        if (subtitlesByDefault && !subLangCode.isNullOrBlank() && subLangCode != "none") {
+            trackParamsBuilder.setPreferredTextLanguage(subLangCode)
+        }
+
+        player.trackSelectionParameters = trackParamsBuilder.build()
+        if (defaultSpeed > 0f) {
+            player.setPlaybackSpeed(defaultSpeed)
+            _playbackState.value = _playbackState.value.copy(playbackSpeed = defaultSpeed)
+        }
 
         val mediaSource = createMediaSource(stream, subtitles)
         player.setMediaSource(mediaSource)
@@ -651,20 +734,34 @@ class ExoPlayerManager(private val context: Context) {
         }
     }
 
+    fun pause() {
+        exoPlayer?.pause()
+    }
+
+    fun play() {
+        exoPlayer?.play()
+    }
+
     fun seekTo(positionMs: Long) {
         exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
     }
 
-    fun skipForward(seconds: Int = 10) {
+    fun skipForward(seconds: Int = 0) {
+        val step = if (seconds > 0) seconds else try {
+            (context.applicationContext as? SumanMoviesApp)?.preferencesManager?.doubleTapSeekDuration?.value ?: 10
+        } catch (_: Exception) { 10 }
         exoPlayer?.let { p ->
-            val target = p.currentPosition + (seconds * 1000L)
+            val target = p.currentPosition + (step * 1000L)
             p.seekTo(target.coerceAtMost(p.duration))
         }
     }
 
-    fun skipBackward(seconds: Int = 10) {
+    fun skipBackward(seconds: Int = 0) {
+        val step = if (seconds > 0) seconds else try {
+            (context.applicationContext as? SumanMoviesApp)?.preferencesManager?.doubleTapSeekDuration?.value ?: 10
+        } catch (_: Exception) { 10 }
         exoPlayer?.let { p ->
-            val target = p.currentPosition - (seconds * 1000L)
+            val target = p.currentPosition - (step * 1000L)
             p.seekTo(target.coerceAtLeast(0L))
         }
     }

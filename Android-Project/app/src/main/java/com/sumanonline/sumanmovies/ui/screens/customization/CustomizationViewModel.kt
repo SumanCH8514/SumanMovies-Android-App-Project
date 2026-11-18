@@ -28,7 +28,7 @@ enum class PlayerUiStyle {
 data class CustomizationUiState(
     val appearanceMode: AppearanceMode = AppearanceMode.DARK,
     val homeTabsStyle: HomeTabsStyle = HomeTabsStyle.TOP_GLASS,
-    val selectedAccent: AppAccent = AppAccent.ROYAL_INDIGO,
+    val selectedAccent: AppAccent = AppAccent.SUNSET_GOLD,
     val applyPaletteToPlayer: Boolean = true,
     val selectedLanguage: String = "en-US",
     val playerUiStyle: PlayerUiStyle = PlayerUiStyle.MODERN

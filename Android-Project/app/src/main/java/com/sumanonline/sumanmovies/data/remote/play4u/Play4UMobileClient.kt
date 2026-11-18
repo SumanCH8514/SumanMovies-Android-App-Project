@@ -300,7 +300,8 @@ class Play4UMobileClient {
         identifier: String,
         season: Int = 0,
         episode: Int = 0,
-        title: String? = null
+        title: String? = null,
+        year: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> = withContext(Dispatchers.IO) {
         val sPad = if (season > 0) String.format(java.util.Locale.US, "%02d", season) else "01"
         val ePad = if (episode > 0) String.format(java.util.Locale.US, "%02d", episode) else "01"
@@ -333,13 +334,23 @@ class Play4UMobileClient {
         }
 
         if (!title.isNullOrBlank()) {
-            val cleanTitle = title.replace(Regex("""\s*\(\d{4}\)"""), "").replace(Regex("""[:\-/].*"""), "").trim()
-            val searchResults = search(cleanTitle).ifEmpty {
-                if (cleanTitle != title) search(title) else emptyList()
+            val queries = com.sumanonline.sumanmovies.util.MediaMatcher.buildSearchQueries(title)
+            val searchResults = mutableListOf<MediaItem>()
+            for (q in queries) {
+                val results = search(q)
+                if (results.isNotEmpty()) {
+                    searchResults.addAll(results)
+                    break
+                }
             }
-            val matched = searchResults.firstOrNull {
-                it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-            } ?: searchResults.firstOrNull()
+
+            val matched = com.sumanonline.sumanmovies.util.MediaMatcher.findBestMatch(
+                searchResults,
+                targetTitle = title,
+                targetYear = year,
+                season = season,
+                isSeries = isSeries
+            )
 
             if (matched != null) {
                 if (isSeries) {

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.ui.components.TopMinimalBar
 import com.sumanonline.sumanmovies.ui.screens.customization.HomeTabsStyle
@@ -69,6 +71,7 @@ fun HomeScreen(
     homeTabsStyle: HomeTabsStyle = HomeTabsStyle.TOP_GLASS,
     onSeeAllCategory: (String, String) -> Unit = { _, _ -> },
     onNavigateHistory: () -> Unit = {},
+    onPlayContinueWatching: (WatchHistoryEntity) -> Unit = { _ -> },
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -214,9 +217,26 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             items(state.continueWatching) { item ->
+                                val isSeries = item.mediaType.equals("SERIES", ignoreCase = true) ||
+                                        item.mediaType.equals("ANIME", ignoreCase = true) ||
+                                        item.mediaType.equals("DRAMA", ignoreCase = true)
+
+                                val cleanBaseTitle = item.title
+                                    .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+                                    .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+                                    .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                                    .trim()
+                                    .ifBlank { item.title }
+
+                                val displayTitle = if (isSeries) {
+                                    "$cleanBaseTitle - S${item.seasonNumber}E${item.episodeNumber}"
+                                } else {
+                                    item.title
+                                }
+
                                 val media = MediaItem(
                                     id = item.mediaId,
-                                    title = item.title,
+                                    title = displayTitle,
                                     posterUrl = item.posterUrl,
                                     mediaType = try {
                                         MediaType.valueOf(item.mediaType)
@@ -225,10 +245,12 @@ fun HomeScreen(
                                     }
                                 )
 
+                                val entityForCard = item.copy(title = displayTitle)
+
                                 ContinueWatchingCard(
-                                    item = item,
+                                    item = entityForCard,
                                     onResumeClick = {
-                                        onPlayClick(media)
+                                        onPlayContinueWatching(entityForCard)
                                     },
                                     onInfoClick = {
                                         onMediaClick(media)
@@ -241,7 +263,7 @@ fun HomeScreen(
                                     },
                                     onRestartClick = {
                                         viewModel.restartProgress(item.id)
-                                        onPlayClick(media)
+                                        onPlayContinueWatching(entityForCard)
                                     }
                                 )
                             }
@@ -252,21 +274,30 @@ fun HomeScreen(
 
                 when (state.selectedCategory) {
                     "Movies" -> {
-                        mediaSectionItem("Trending Movies", state.trendingMovies, "trending_movies", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Indian Movies", state.indianMovies, "indian_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Top 10 Trending Movies", state.trendingMovies, "top_10_trending_movies", onMediaClick, onSeeAllCategory, isTop10 = true)
+                        mediaSectionItem("Indian Cinema", state.indianCinemaMovies, "indian_cinema", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Anime Movies", state.animeMovies, "anime_movies", onMediaClick, onSeeAllCategory)
                         mediaSectionItem("Popular Movies", state.popularMovies, "popular_movies", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Now Playing in Theaters", state.nowPlaying, "now_playing", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Top Rated Movies", state.topRated, "top_rated", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Action & Adventure", state.actionAdventureMovies, "action_adventure_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Sci-Fi & Fantasy", state.sciFiFantasyMovies, "scifi_fantasy_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Comedy Movies", state.comedyMovies, "comedy_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Horror & Thriller", state.horrorThrillerMovies, "horror_thriller_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Romance Movies", state.romanceMovies, "romance_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Crime & Mystery", state.crimeMysteryMovies, "crime_mystery_movies", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Top Rated Movies", state.topRatedMovies, "top_rated_movies", onMediaClick, onSeeAllCategory)
                     }
                     "Series" -> {
-                        mediaSectionItem("Trending TV Series", state.trendingTv, "trending_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Indian TV Series", state.indianTv, "indian_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Hollywood TV Series", state.hollywoodTv, "hollywood_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Korean TV Series", state.koreanTv, "korean_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Chinese TV Series", state.chineseTv, "chinese_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Turkish TV Series", state.turkishTv, "turkish_tv", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Top 10 Trending Series", state.trendingTv, "top_10_trending_series", onMediaClick, onSeeAllCategory, isTop10 = true)
+                        mediaSectionItem("Indian webseries", state.indianWebseries, "indian_webseries", onMediaClick, onSeeAllCategory)
                         mediaSectionItem("Popular TV Shows", state.popularTv, "popular_tv", onMediaClick, onSeeAllCategory)
-                        mediaSectionItem("Airing Today", state.airingToday, "airing_today", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Drama Series", state.dramaSeries, "drama_series", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Crime Stories", state.crimeStories, "crime_stories", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Comedy Series", state.comedySeries, "comedy_series", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Sci-Fi & Fantasy Series", state.sciFiFantasySeries, "scifi_fantasy_series", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Action & Adventure", state.actionAdventureSeries, "action_adventure_series", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Mystery & Suspense", state.mysterySuspenseSeries, "mystery_suspense_series", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("K-Drama Sensations", state.kDramaSensations, "kdrama_sensations", onMediaClick, onSeeAllCategory)
+                        mediaSectionItem("Top Rated TV Series", state.topRatedTv, "top_rated_tv", onMediaClick, onSeeAllCategory)
                     }
                     "Anime" -> {
                         mediaSectionItem("Trending Anime", state.trendingAnime, "trending_anime", onMediaClick, onSeeAllCategory)
@@ -333,9 +364,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.mediaSectionItem(
     items: List<MediaItem>,
     categoryKey: String,
     onMediaClick: (MediaItem) -> Unit,
-    onSeeAllCategory: (String, String) -> Unit
+    onSeeAllCategory: (String, String) -> Unit,
+    isTop10: Boolean = false
 ) {
     if (items.isNotEmpty()) {
+        val displayItems = if (isTop10) items.take(10) else items
         item {
             SectionHeader(
                 title = title,
@@ -345,8 +378,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.mediaSectionItem(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(items) { item ->
-                    VerticalPosterCard(item = item, onClick = { onMediaClick(item) })
+                itemsIndexed(displayItems) { index, item ->
+                    VerticalPosterCard(
+                        item = item,
+                        onClick = { onMediaClick(item) },
+                        rank = if (isTop10) index + 1 else null
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(14.dp))

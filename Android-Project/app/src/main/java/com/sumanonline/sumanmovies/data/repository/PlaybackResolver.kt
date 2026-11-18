@@ -10,6 +10,7 @@ import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
+import com.sumanonline.sumanmovies.util.MediaMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -25,15 +26,16 @@ class PlaybackResolver(
         title: String,
         season: Int = 1,
         episode: Int = 1,
-        providerId: String? = null
+        providerId: String? = null,
+        releaseYear: String? = null
     ): ServerState = withContext(Dispatchers.IO) {
         try {
             val (rawStreams, subtitles) = when (server) {
-                StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId)
-                StreamingServer.FOURKHDHUB -> resolveFourKHdHub(title, season, episode, providerId)
-                StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId)
-                StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId)
-                StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId)
+                StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId, releaseYear)
+                StreamingServer.FOURKHDHUB -> resolveFourKHdHub(title, season, episode, providerId, releaseYear)
+                StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId, releaseYear)
+                StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId, releaseYear)
+                StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId, releaseYear)
             }
 
             val validStreams = rawStreams.filter { validateStreamSource(it) }
@@ -67,55 +69,77 @@ class PlaybackResolver(
         }
     }
 
-    private fun cleanSearchQuery(title: String): String {
-        return title
-            .replace(Regex("""\s*\(\d{4}\)"""), "")
-            .replace(Regex("""[:\-/].*"""), "")
-            .trim()
-    }
-
     private suspend fun resolveMovieBox(
         title: String,
         season: Int,
         episode: Int,
-        providerId: String?
+        providerId: String?,
+        releaseYear: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
-        val cleanTitle = cleanSearchQuery(title)
-
         if (providerId?.startsWith("moviebox:") == true) {
             val cleanId = providerId.removePrefix("moviebox:")
             val (directStreams, directSubs) = movieBoxClient.resolveStreams(cleanId, season, episode)
-            if (directStreams.isNotEmpty()) {
-                return Pair(directStreams, directSubs)
+            val backendRes = try {
+                backendRepo.getStreams("moviebox", cleanId, season, episode)
+            } catch (_: Exception) { Pair(emptyList(), emptyList()) }
+            val mergedStreams = (directStreams + backendRes.first).distinctBy { it.url }
+            val mergedSubs = (directSubs + backendRes.second).distinctBy { it.url }
+            if (mergedStreams.isNotEmpty()) {
+                return Pair(mergedStreams, mergedSubs)
             }
-            return backendRepo.getStreams("moviebox", cleanId, season, episode)
+            return backendRes
         }
 
-        val localMatches = movieBoxClient.search(cleanTitle).ifEmpty {
-            if (cleanTitle != title) movieBoxClient.search(title) else emptyList()
+        val queries = MediaMatcher.buildSearchQueries(title)
+        val localMatches = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = movieBoxClient.search(q)
+            if (results.isNotEmpty()) {
+                localMatches.addAll(results)
+                break
+            }
         }
-        val topLocal = localMatches.firstOrNull {
-            it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-        } ?: localMatches.firstOrNull()
+
+        val topLocal = MediaMatcher.findBestMatch(
+            localMatches,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (topLocal != null) {
             val cleanId = topLocal.id.removePrefix("moviebox:")
             val (directStreams, directSubs) = movieBoxClient.resolveStreams(cleanId, season, episode)
-            if (directStreams.isNotEmpty()) {
-                return Pair(directStreams, directSubs)
+            val backendRes = try {
+                backendRepo.getStreams("moviebox", cleanId, season, episode)
+            } catch (_: Exception) { Pair(emptyList(), emptyList()) }
+            val mergedStreams = (directStreams + backendRes.first).distinctBy { it.url }
+            val mergedSubs = (directSubs + backendRes.second).distinctBy { it.url }
+            if (mergedStreams.isNotEmpty()) {
+                return Pair(mergedStreams, mergedSubs)
             }
-            val backendRes = backendRepo.getStreams("moviebox", cleanId, season, episode)
             if (backendRes.first.isNotEmpty()) {
                 return backendRes
             }
         }
 
-        val backendSearch = backendRepo.search(cleanTitle, "moviebox").ifEmpty {
-            if (cleanTitle != title) backendRepo.search(title, "moviebox") else emptyList()
+        val backendSearch = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = backendRepo.search(q, "moviebox")
+            if (results.isNotEmpty()) {
+                backendSearch.addAll(results)
+                break
+            }
         }
-        val topBackend = backendSearch.firstOrNull {
-            it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-        } ?: backendSearch.firstOrNull()
+
+        val topBackend = MediaMatcher.findBestMatch(
+            backendSearch,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (topBackend != null) {
             val cleanId = topBackend.id.removePrefix("moviebox:")
@@ -129,10 +153,9 @@ class PlaybackResolver(
         title: String,
         season: Int,
         episode: Int,
-        providerId: String?
+        providerId: String?,
+        releaseYear: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
-        val cleanTitle = cleanSearchQuery(title)
-
         if (providerId?.startsWith("fourkhdhub:") == true || providerId?.startsWith("4khdhub:") == true) {
             val cleanId = providerId.substringAfter(":")
             val directStreams = fourKHdHubClient.resolveStreams(cleanId, season, episode)
@@ -142,21 +165,24 @@ class PlaybackResolver(
             return backendRepo.getStreams("fourkhdhub", cleanId, season, episode)
         }
 
-        val localResults = fourKHdHubClient.search(cleanTitle).ifEmpty {
-            if (cleanTitle != title) fourKHdHubClient.search(title) else emptyList()
+        val queries = MediaMatcher.buildSearchQueries(title)
+        val localResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val queryText = if (season > 0) "$q Season $season" else q
+            val results = fourKHdHubClient.search(queryText).ifEmpty { fourKHdHubClient.search(q) }
+            if (results.isNotEmpty()) {
+                localResults.addAll(results)
+                break
+            }
         }
-        val seasonRegex = Regex("""\b(?:Season\s*0?|S0?)$season\b""", RegexOption.IGNORE_CASE)
-        val localMatch = if (season > 0) {
-            localResults.firstOrNull { seasonRegex.containsMatchIn(it.title) }
-                ?: localResults.firstOrNull { it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.SERIES && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)) }
-                ?: localResults.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-                ?: localResults.firstOrNull()
-        } else {
-            localResults.firstOrNull {
-                it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.MOVIE && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true))
-            } ?: localResults.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-              ?: localResults.firstOrNull()
-        }
+
+        val localMatch = MediaMatcher.findBestMatch(
+            localResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (localMatch != null) {
             val cleanId = localMatch.id.substringAfter(":")
@@ -166,20 +192,23 @@ class PlaybackResolver(
             }
         }
 
-        val results = backendRepo.search(cleanTitle, "fourkhdhub").ifEmpty {
-            if (cleanTitle != title) backendRepo.search(title, "fourkhdhub") else emptyList()
+        val backendResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val queryText = if (season > 0) "$q Season $season" else q
+            val results = backendRepo.search(queryText, "fourkhdhub").ifEmpty { backendRepo.search(q, "fourkhdhub") }
+            if (results.isNotEmpty()) {
+                backendResults.addAll(results)
+                break
+            }
         }
-        val match = if (season > 0) {
-            results.firstOrNull { seasonRegex.containsMatchIn(it.title) }
-                ?: results.firstOrNull { it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.SERIES }
-                ?: results.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-                ?: results.firstOrNull()
-        } else {
-            results.firstOrNull {
-                it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.MOVIE && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true))
-            } ?: results.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-              ?: results.firstOrNull()
-        }
+
+        val match = MediaMatcher.findBestMatch(
+            backendResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (match != null) {
             val cleanId = match.id.substringAfter(":")
@@ -197,10 +226,9 @@ class PlaybackResolver(
         title: String,
         season: Int,
         episode: Int,
-        providerId: String?
+        providerId: String?,
+        releaseYear: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
-        val cleanTitle = cleanSearchQuery(title)
-
         if (providerId?.startsWith("hdhub4u:") == true) {
             val cleanId = providerId.substringAfter(":")
             val directStreams = hdHub4uClient.resolveStreams(cleanId, season, episode)
@@ -210,24 +238,24 @@ class PlaybackResolver(
             return backendRepo.getStreams("hdhub4u", cleanId, season, episode)
         }
 
-        val query = if (season > 0) "$cleanTitle Season $season" else cleanTitle
-        val localResults = hdHub4uClient.search(query).ifEmpty {
-            hdHub4uClient.search(cleanTitle).ifEmpty {
-                if (cleanTitle != title) hdHub4uClient.search(title) else emptyList()
+        val queries = MediaMatcher.buildSearchQueries(title)
+        val localResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val queryText = if (season > 0) "$q Season $season" else q
+            val results = hdHub4uClient.search(queryText).ifEmpty { hdHub4uClient.search(q) }
+            if (results.isNotEmpty()) {
+                localResults.addAll(results)
+                break
             }
         }
-        val seasonRegex = Regex("""\b(?:Season\s*0?|S0?)$season\b""", RegexOption.IGNORE_CASE)
-        val localMatch = if (season > 0) {
-            localResults.firstOrNull { seasonRegex.containsMatchIn(it.title) }
-                ?: localResults.firstOrNull { it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.SERIES && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)) }
-                ?: localResults.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-                ?: localResults.firstOrNull()
-        } else {
-            localResults.firstOrNull {
-                it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.MOVIE && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true))
-            } ?: localResults.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-              ?: localResults.firstOrNull()
-        }
+
+        val localMatch = MediaMatcher.findBestMatch(
+            localResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (localMatch != null) {
             val cleanId = localMatch.id.substringAfter(":")
@@ -237,22 +265,23 @@ class PlaybackResolver(
             }
         }
 
-        val results = backendRepo.search(query, "hdhub4u").ifEmpty {
-            backendRepo.search(cleanTitle, "hdhub4u").ifEmpty {
-                if (cleanTitle != title) backendRepo.search(title, "hdhub4u") else emptyList()
+        val backendResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val queryText = if (season > 0) "$q Season $season" else q
+            val results = backendRepo.search(queryText, "hdhub4u").ifEmpty { backendRepo.search(q, "hdhub4u") }
+            if (results.isNotEmpty()) {
+                backendResults.addAll(results)
+                break
             }
         }
-        val match = if (season > 0) {
-            results.firstOrNull { seasonRegex.containsMatchIn(it.title) }
-                ?: results.firstOrNull { it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.SERIES }
-                ?: results.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-                ?: results.firstOrNull()
-        } else {
-            results.firstOrNull {
-                it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.MOVIE && (it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true))
-            } ?: results.firstOrNull { it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true) }
-              ?: results.firstOrNull()
-        }
+
+        val match = MediaMatcher.findBestMatch(
+            backendResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (match != null) {
             val cleanId = match.id.substringAfter(":")
@@ -270,49 +299,64 @@ class PlaybackResolver(
         title: String,
         season: Int,
         episode: Int,
-        providerId: String?
+        providerId: String?,
+        releaseYear: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
-        val cleanTitle = cleanSearchQuery(title)
-
         if (providerId?.startsWith("play4u:") == true) {
             val cleanId = providerId.removePrefix("play4u:")
-            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, cleanTitle)
+            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, title, releaseYear)
             if (directStreams.first.isNotEmpty()) {
                 return directStreams
             }
             return backendRepo.getStreams("play4u", cleanId, season, episode)
         }
 
-        val localResults = play4UClient.search(cleanTitle).ifEmpty {
-            if (cleanTitle != title) play4UClient.search(title) else emptyList()
+        val queries = MediaMatcher.buildSearchQueries(title)
+        val localResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = play4UClient.search(q)
+            if (results.isNotEmpty()) {
+                localResults.addAll(results)
+                break
+            }
         }
-        val localMatch = localResults.firstOrNull {
-            it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-        } ?: localResults.firstOrNull()
+
+        val localMatch = MediaMatcher.findBestMatch(
+            localResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (localMatch != null) {
             val cleanId = localMatch.id.removePrefix("play4u:")
-            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, cleanTitle)
+            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, title, releaseYear)
             if (directStreams.first.isNotEmpty()) {
                 return directStreams
             }
         }
 
-        val directFallback = play4UClient.resolveStreams(cleanTitle, season, episode, cleanTitle)
-        if (directFallback.first.isNotEmpty()) {
-            return directFallback
+        val backendResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = backendRepo.search(q, "play4u")
+            if (results.isNotEmpty()) {
+                backendResults.addAll(results)
+                break
+            }
         }
 
-        val results = backendRepo.search(cleanTitle, "play4u").ifEmpty {
-            if (cleanTitle != title) backendRepo.search(title, "play4u") else emptyList()
-        }
-        val match = results.firstOrNull {
-            it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-        } ?: results.firstOrNull()
+        val match = MediaMatcher.findBestMatch(
+            backendResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (match != null) {
             val cleanId = match.id.removePrefix("play4u:")
-            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, cleanTitle)
+            val directStreams = play4UClient.resolveStreams(cleanId, season, episode, title, releaseYear)
             if (directStreams.first.isNotEmpty()) {
                 return directStreams
             }
@@ -326,21 +370,31 @@ class PlaybackResolver(
         title: String,
         season: Int,
         episode: Int,
-        providerId: String?
+        providerId: String?,
+        releaseYear: String? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
-        val cleanTitle = cleanSearchQuery(title)
-
         if (providerId?.startsWith("dramachi:") == true) {
             val cleanId = providerId.removePrefix("dramachi:")
             return backendRepo.getStreams("dramachi", cleanId, season, episode)
         }
 
-        val results = backendRepo.search(cleanTitle, "dramachi").ifEmpty {
-            if (cleanTitle != title) backendRepo.search(title, "dramachi") else emptyList()
+        val queries = MediaMatcher.buildSearchQueries(title)
+        val backendResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = backendRepo.search(q, "dramachi")
+            if (results.isNotEmpty()) {
+                backendResults.addAll(results)
+                break
+            }
         }
-        val match = results.firstOrNull {
-            it.title.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(it.title, ignoreCase = true)
-        } ?: results.firstOrNull()
+
+        val match = MediaMatcher.findBestMatch(
+            backendResults,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
 
         if (match != null) {
             val cleanId = match.id.removePrefix("dramachi:")

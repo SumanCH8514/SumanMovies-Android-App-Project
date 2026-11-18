@@ -78,13 +78,19 @@ class PlayerActivity : ComponentActivity() {
         }
 
         val mediaType = try {
-            MediaType.valueOf(mediaTypeStr.uppercase())
+            when (mediaTypeStr.uppercase()) {
+                "TV", "SERIES", "SHOW" -> MediaType.SERIES
+                "ANIME" -> MediaType.ANIME
+                "DRAMA" -> MediaType.DRAMA
+                else -> MediaType.valueOf(mediaTypeStr.uppercase())
+            }
         } catch (_: Exception) {
             MediaType.MOVIE
         }
 
         val season = intent.getIntExtra("EXTRA_SEASON", 1)
         val episode = intent.getIntExtra("EXTRA_EPISODE", 1)
+        val episodeTitle = intent.getStringExtra("EXTRA_EPISODE_TITLE")
 
         viewModel.initPlayback(
             mediaId = mediaId,
@@ -103,14 +109,15 @@ class PlayerActivity : ComponentActivity() {
             initialStreams = allStreams,
             initialSubtitles = allSubtitles,
             seasonNumber = season,
-            episodeNumber = episode
+            episodeNumber = episode,
+            initialEpisodeTitle = episodeTitle
         )
 
         setContent {
             val prefs = (application as? SumanMoviesApp)?.preferencesManager
             val applyPalette = prefs?.applyPaletteToPlayer?.collectAsState()?.value ?: false
-            val savedAccent = prefs?.selectedAccent?.collectAsState()?.value ?: AppAccent.ROYAL_INDIGO
-            val accent = if (applyPalette) savedAccent else AppAccent.ROYAL_INDIGO
+            val savedAccent = prefs?.selectedAccent?.collectAsState()?.value ?: AppAccent.SUNSET_GOLD
+            val accent = if (applyPalette) savedAccent else AppAccent.SUNSET_GOLD
             val playerUiStyle = prefs?.playerUiStyle?.collectAsState()?.value ?: PlayerUiStyle.MODERN
 
             SumanMoviesTheme(accent = accent) {

@@ -6,6 +6,8 @@ import com.sumanonline.sumanmovies.data.models.MediaDetails
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
+import android.util.LruCache
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -38,11 +40,49 @@ class TmdbRepository(
         chain.proceed(request)
     }
 
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = 64
+        maxRequestsPerHost = 20
+    }
+
     private val okHttpClient = OkHttpClient.Builder()
+        .dispatcher(dispatcher)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .addInterceptor(authInterceptor)
         .build()
+
+    private val categoryCache = LruCache<String, Pair<Long, List<MediaItem>>>(120)
+    private val categoryTtlMs = 15 * 60 * 1000L
+    private val searchCache = LruCache<String, Pair<Long, List<MediaItem>>>(60)
+    private val searchTtlMs = 5 * 60 * 1000L
+
+    fun clearCache() {
+        synchronized(categoryCache) { categoryCache.evictAll() }
+        synchronized(searchCache) { searchCache.evictAll() }
+    }
+
+    private suspend inline fun fetchCategoryCached(
+        key: String,
+        page: Int,
+        crossinline apiCall: suspend () -> List<MediaItem>
+    ): List<MediaItem> {
+        if (page == 1) {
+            val cached = synchronized(categoryCache) { categoryCache.get(key) }
+            if (cached != null && (System.currentTimeMillis() - cached.first) < categoryTtlMs && cached.second.isNotEmpty()) {
+                return cached.second
+            }
+        }
+        val list = try {
+            apiCall()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (page == 1 && list.isNotEmpty()) {
+            synchronized(categoryCache) { categoryCache.put(key, Pair(System.currentTimeMillis(), list)) }
+        }
+        return list
+    }
 
     private val retrofit = Retrofit.Builder()
         .baseUrl(apiBaseUrl)
@@ -56,91 +96,135 @@ class TmdbRepository(
         this.apiKey = key
     }
 
-    suspend fun getTrending(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTrending(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTrending_${page}_${lang}", page) {
             val resp = api.getTrending(page, lang)
             resp.results.map { dtoToMediaItem(it) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTrendingMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTrendingMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTrendingMovies_${page}_${lang}", page) {
             api.getTrendingMovies(page, lang).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getIndianMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getIndianMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getIndianMovies_${page}_${lang}", page) {
             api.discoverMovies(
                 page = page,
                 languageFilter = "hi|te|ta|ml|kn|bn",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getPopularMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getPopularMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getPopularMovies_${page}_${lang}", page) {
             api.getPopularMovies(page, lang).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getNowPlayingMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getNowPlayingMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getNowPlayingMovies_${page}_${lang}", page) {
             api.getNowPlayingMovies(page, lang).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTopRatedMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTopRatedMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTopRatedMovies_${page}_${lang}", page) {
             api.getTopRatedMovies(page, lang).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTrendingTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getAnimeMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getAnimeMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "16",
+                languageFilter = "ja",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getActionAdventureMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getActionAdventureMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "28|12",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getSciFiFantasyMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getSciFiFantasyMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "878|14",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getComedyMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getComedyMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "35",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getHorrorThrillerMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getHorrorThrillerMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "27|53",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getRomanceMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getRomanceMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "10749",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getCrimeMysteryMovies(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getCrimeMysteryMovies_${page}_${lang}", page) {
+            api.discoverMovies(
+                page = page,
+                withGenres = "80|9648",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+        }
+
+    suspend fun getTrendingTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTrendingTv_${page}_${lang}", page) {
             api.getTrendingTv(page, lang).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getPopularTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getPopularTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getPopularTv_${page}_${lang}", page) {
             api.getPopularTv(page, lang).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getIndianTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getIndianTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getIndianTv_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "hi|te|ta|ml|kn|bn",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getHollywoodTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getHollywoodTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getHollywoodTv_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "en",
@@ -148,60 +232,110 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getKoreanTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getKoreanTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getKoreanTv_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "ko",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getChineseTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getChineseTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getChineseTv_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "zh",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTurkishTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTurkishTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTurkishTv_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "tr",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getAiringTodayTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getAiringTodayTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getAiringTodayTv_${page}_${lang}", page) {
             api.getAiringTodayTv(page, lang).results.map { dtoToMediaItem(it, MediaType.SERIES) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTrendingAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTopRatedTv(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTopRatedTv_${page}_${lang}", page) {
+            api.getTopRatedTv(page, lang).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getDramaSeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getDramaSeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "18",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getCrimeSeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getCrimeSeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "80",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getComedySeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getComedySeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "35",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getSciFiFantasySeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getSciFiFantasySeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "10765",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getActionAdventureSeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getActionAdventureSeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "10759",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getMysterySuspenseSeries(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getMysterySuspenseSeries_${page}_${lang}", page) {
+            api.discoverTv(
+                page = page,
+                withGenres = "9648",
+                sortBy = "popularity.desc",
+                language = lang
+            ).results.map { dtoToMediaItem(it, MediaType.SERIES) }
+        }
+
+    suspend fun getTrendingAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTrendingAnime_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "16",
@@ -209,13 +343,10 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.ANIME) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getNewSeasonAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getNewSeasonAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getNewSeasonAnime_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "16",
@@ -223,13 +354,10 @@ class TmdbRepository(
                 sortBy = "first_air_date.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.ANIME) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getPopularAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getPopularAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getPopularAnime_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "16",
@@ -237,13 +365,10 @@ class TmdbRepository(
                 sortBy = "vote_count.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.ANIME) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getJapaneseAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getJapaneseAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getJapaneseAnime_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "16",
@@ -251,13 +376,10 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.ANIME) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getChineseAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getChineseAnime(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getChineseAnime_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "16",
@@ -265,13 +387,10 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.ANIME) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getKDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getKDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getKDrama_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "ko",
@@ -279,13 +398,10 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getChineseDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getChineseDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getChineseDrama_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "zh",
@@ -293,13 +409,10 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getIndianDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getIndianDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getIndianDrama_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "hi|te|ta|ml|kn|bn",
@@ -307,49 +420,37 @@ class TmdbRepository(
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getTurkishDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getTurkishDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getTurkishDrama_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "tr",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getPakistaniDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getPakistaniDrama(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getPakistaniDrama_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 languageFilter = "ur",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
-    suspend fun getPopularDramas(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+    suspend fun getPopularDramas(page: Int = 1, lang: String = "en-US"): List<MediaItem> =
+        fetchCategoryCached("getPopularDramas_${page}_${lang}", page) {
             api.discoverTv(
                 page = page,
                 withGenres = "18",
                 sortBy = "popularity.desc",
                 language = lang
             ).results.map { dtoToMediaItem(it, MediaType.DRAMA) }
-        } catch (_: Exception) {
-            emptyList()
         }
-    }
 
     suspend fun getAsianDramas(page: Int = 1, lang: String = "en-US"): List<MediaItem> {
         return getKDrama(page, lang)
@@ -359,14 +460,103 @@ class TmdbRepository(
         return getTrendingAnime(page, lang)
     }
 
+    suspend fun getMediaByGenre(
+        genreNameOrKey: String,
+        page: Int = 1,
+        lang: String = "en-US"
+    ): List<MediaItem> = fetchCategoryCached("getMediaByGenre_${genreNameOrKey.lowercase()}_${page}_${lang}", page) {
+        val clean = genreNameOrKey.lowercase().removePrefix("genre_").trim()
+        val movieGenreId = when (clean) {
+            "action" -> "28"
+            "adventure" -> "12"
+            "animation" -> "16"
+            "comedy" -> "35"
+            "crime" -> "80"
+            "documentary" -> "99"
+            "drama" -> "18"
+            "fantasy" -> "14"
+            "horror" -> "27"
+            "mystery" -> "9648"
+            "romance" -> "10749"
+            "science_fiction", "science fiction", "scifi", "sci-fi" -> "878"
+            "thriller" -> "53"
+            "war" -> "10752"
+            "western" -> "37"
+            "family" -> "10751"
+            "history" -> "36"
+            "music" -> "10402"
+            else -> null
+        }
+        val tvGenreId = when (clean) {
+            "action", "adventure" -> "10759"
+            "animation" -> "16"
+            "comedy" -> "35"
+            "crime" -> "80"
+            "documentary" -> "99"
+            "drama" -> "18"
+            "fantasy" -> "10765"
+            "horror" -> "10765|9648"
+            "mystery" -> "9648"
+            "romance" -> "18|10766"
+            "science_fiction", "science fiction", "scifi", "sci-fi" -> "10765"
+            "western" -> "37"
+            "family" -> "10751"
+            "war" -> "10768"
+            else -> null
+        }
+
+        val movies = if (movieGenreId != null) {
+            try {
+                api.discoverMovies(page = page, withGenres = movieGenreId, sortBy = "popularity.desc", language = lang)
+                    .results.map { dtoToMediaItem(it, MediaType.MOVIE) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        val tvShows = if (tvGenreId != null) {
+            try {
+                api.discoverTv(page = page, withGenres = tvGenreId, sortBy = "popularity.desc", language = lang)
+                    .results.map { dtoToMediaItem(it, MediaType.SERIES) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        if (movies.isNotEmpty() && tvShows.isNotEmpty()) {
+            val combined = mutableListOf<MediaItem>()
+            val maxLen = maxOf(movies.size, tvShows.size)
+            for (i in 0 until maxLen) {
+                if (i < movies.size) combined.add(movies[i])
+                if (i < tvShows.size) combined.add(tvShows[i])
+            }
+            combined.distinctBy { it.id }
+        } else {
+            movies.ifEmpty { tvShows }
+        }
+    }
+
     suspend fun search(query: String, page: Int = 1, lang: String = "en-US"): List<MediaItem> {
-        return try {
+        val cleanQuery = query.trim().lowercase(java.util.Locale.ROOT)
+        if (cleanQuery.isBlank()) return emptyList()
+        val cacheKey = "search_${cleanQuery}_${page}_${lang}"
+        if (page == 1) {
+            val cached = synchronized(searchCache) { searchCache.get(cacheKey) }
+            if (cached != null && (System.currentTimeMillis() - cached.first) < searchTtlMs && cached.second.isNotEmpty()) {
+                return cached.second
+            }
+        }
+        val list = try {
             api.searchMulti(query, page, lang).results
                 .filter { it.posterPath != null || it.backdropPath != null }
                 .map { dtoToMediaItem(it) }
         } catch (_: Exception) {
             emptyList()
         }
+        if (page == 1 && list.isNotEmpty()) {
+            synchronized(searchCache) { searchCache.put(cacheKey, Pair(System.currentTimeMillis(), list)) }
+        }
+        return list
     }
 
     private fun extractLogoUrl(images: TmdbImagesDto?): String? {
@@ -543,11 +733,23 @@ class TmdbRepository(
         }
     }
 
+    private val tmdbGenreMap = mapOf(
+        28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
+        80 to "Crime", 99 to "Documentary", 18 to "Drama", 10751 to "Family",
+        14 to "Fantasy", 36 to "History", 27 to "Horror", 10402 to "Music",
+        9648 to "Mystery", 10749 to "Romance", 878 to "Science Fiction",
+        10770 to "TV Movie", 53 to "Thriller", 10752 to "War", 37 to "Western",
+        10759 to "Action & Adventure", 10762 to "Kids", 10763 to "News",
+        10764 to "Reality", 10765 to "Sci-Fi & Fantasy", 10766 to "Soap",
+        10767 to "Talk", 10768 to "War & Politics"
+    )
+
     private fun dtoToMediaItem(dto: TmdbMovieDto, forcedType: MediaType? = null): MediaItem {
         val title = dto.title ?: dto.name ?: dto.originalTitle ?: "Untitled"
         val date = dto.releaseDate ?: dto.firstAirDate
         val year = date?.take(4)
         val type = forcedType ?: if (dto.title != null) MediaType.MOVIE else MediaType.SERIES
+        val mappedGenres = dto.genreIds?.mapNotNull { tmdbGenreMap[it] } ?: emptyList()
 
         return MediaItem(
             id = dto.id.toString(),
@@ -558,7 +760,8 @@ class TmdbRepository(
             rating = dto.voteAverage,
             posterUrl = dto.posterPath?.let { "$imageBaseUrl$it" },
             backdropUrl = dto.backdropPath?.let { "$backdropBaseUrl$it" },
-            overview = dto.overview
+            overview = dto.overview,
+            genres = mappedGenres
         )
     }
 }

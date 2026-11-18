@@ -8,12 +8,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-val LocalAppAccent = staticCompositionLocalOf { AppAccent.ROYAL_INDIGO }
+val LocalAppAccent = staticCompositionLocalOf { AppAccent.SUNSET_GOLD }
 val LocalThemeIsDark = staticCompositionLocalOf { true }
 
 @Composable
 fun SumanMoviesTheme(
-    accent: AppAccent = AppAccent.ROYAL_INDIGO,
+    accent: AppAccent = AppAccent.SUNSET_GOLD,
     isDark: Boolean = true,
     content: @Composable () -> Unit
 ) {

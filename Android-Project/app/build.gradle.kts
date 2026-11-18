@@ -99,18 +99,12 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register("gitPush") {
-    doLast {
-        val root = rootProject.file("..")
-        fun runCmd(vararg args: String) {
-            val p = ProcessBuilder(*args).directory(root).start()
-            p.waitFor()
-        }
-        runCmd("git", "add", "-A")
-        runCmd("git", "commit", "-m", "docs: update README with SumanMovies-v1.0.0-new-player.apk download link")
-        runCmd("git", "push", "origin", "main")
-    }
+tasks.register<Exec>("gitCommitAndPush") {
+    dependsOn("copyDebugApk", "copyNewPlayerApk")
+    workingDir = rootProject.file("..")
+    commandLine("cmd", "/c", "git add Android-Project apk README.md && git commit -m \"feat: update player engine, MovieBox download fix, single-line search bar, default sunset gold theme & latest APKs\" && git push origin main > scratch_git.txt 2>&1")
 }
+
 
 
 

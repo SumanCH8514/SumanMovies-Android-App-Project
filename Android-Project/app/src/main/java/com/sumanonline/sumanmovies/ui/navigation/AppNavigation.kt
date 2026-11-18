@@ -18,7 +18,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
+import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
 import com.sumanonline.sumanmovies.data.models.MediaItem
+import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.repository.MediaRepository
@@ -87,20 +89,29 @@ fun AppNavigation(
         server: StreamingServer? = null,
         allStreams: List<StreamSource> = emptyList(),
         subtitles: List<com.sumanonline.sumanmovies.data.models.SubtitleTrack> = emptyList(),
-        season: Int = 1,
-        episode: Int = 1
+        season: Int? = null,
+        episode: Int? = null
     ) {
         val sMatch = Regex("""S(\d+)E(\d+)""", RegexOption.IGNORE_CASE).find(item.title)
-        val extractedSeason = sMatch?.groupValues?.get(1)?.toIntOrNull() ?: season
-        val extractedEpisode = sMatch?.groupValues?.get(2)?.toIntOrNull() ?: episode
+        val resolvedSeason = season ?: sMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val resolvedEpisode = episode ?: sMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
+
+        val isSeries = item.mediaType != MediaType.MOVIE
+        val cleanBase = item.title
+            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .trim()
+            .ifBlank { item.title }
+        val resolvedTitle = if (isSeries) "$cleanBase - S${resolvedSeason}E${resolvedEpisode}" else item.title
 
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra("EXTRA_MEDIA_ID", item.id)
-            putExtra("EXTRA_TITLE", item.title)
+            putExtra("EXTRA_TITLE", resolvedTitle)
             putExtra("EXTRA_MEDIA_TYPE", item.mediaType.name)
             putExtra("EXTRA_POSTER_URL", item.posterUrl)
-            putExtra("EXTRA_SEASON", extractedSeason)
-            putExtra("EXTRA_EPISODE", extractedEpisode)
+            putExtra("EXTRA_SEASON", resolvedSeason)
+            putExtra("EXTRA_EPISODE", resolvedEpisode)
             if (server != null) {
                 putExtra("EXTRA_SERVER_NAME", server.name)
                 putExtra("EXTRA_SERVER_DISPLAY_NAME", server.displayName)
@@ -165,6 +176,34 @@ fun AppNavigation(
                             navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
                         },
                         onPlayClick = { item -> launchPlayer(context, item) },
+                        onPlayContinueWatching = { entity ->
+                            val cleanBase = entity.title
+                                .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+                                .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+                                .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                                .trim()
+                                .ifBlank { entity.title }
+                            val isSeries = entity.mediaType.equals("SERIES", ignoreCase = true) ||
+                                    entity.mediaType.equals("ANIME", ignoreCase = true) ||
+                                    entity.mediaType.equals("DRAMA", ignoreCase = true)
+                            val formattedTitle = if (isSeries) "$cleanBase - S${entity.seasonNumber}E${entity.episodeNumber}" else entity.title
+                            val media = MediaItem(
+                                id = entity.mediaId,
+                                title = formattedTitle,
+                                posterUrl = entity.posterUrl,
+                                mediaType = try {
+                                    MediaType.valueOf(entity.mediaType)
+                                } catch (_: Exception) {
+                                    MediaType.MOVIE
+                                }
+                            )
+                            launchPlayer(
+                                context = context,
+                                item = media,
+                                season = entity.seasonNumber,
+                                episode = entity.episodeNumber
+                            )
+                        },
                         onSearchClick = { navController.navigate(Screen.Catalog.route) },
                         onSeeAllCategory = { catKey, title ->
                             navController.navigate(Screen.CategoryMedia.createRoute(catKey, title))
@@ -186,6 +225,10 @@ fun AppNavigation(
                         },
                         onNavigateToMovieBox = {
                             navController.navigate(Screen.MovieBox.route)
+                        },
+                        onGenreClick = { genre ->
+                            val key = "genre_${genre.lowercase().replace(" ", "_")}"
+                            navController.navigate(Screen.CategoryMedia.createRoute(key, genre))
                         }
                     )
                 }
@@ -193,7 +236,12 @@ fun AppNavigation(
                 composable(Screen.Activity.route) {
                     ActivityScreen(
                         viewModel = activityViewModel,
-                        onResumeMedia = { item -> launchPlayer(context, item) }
+                        onResumeMedia = { item, season, episode ->
+                            launchPlayer(context, item, season = season, episode = episode)
+                        },
+                        onNavigateDetails = { item ->
+                            navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
+                        }
                     )
                 }
 
@@ -260,6 +308,7 @@ fun AppNavigation(
                         viewModel = play4UViewModel,
                         onBack = { navController.popBackStack() },
                         onMediaClick = { item ->
+                            repository.cacheItem(item)
                             navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
                         }
                     )
@@ -271,6 +320,7 @@ fun AppNavigation(
                         viewModel = movieBoxViewModel,
                         onBack = { navController.popBackStack() },
                         onMediaClick = { item ->
+                            repository.cacheItem(item)
                             navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
                         }
                     )
@@ -283,7 +333,12 @@ fun AppNavigation(
                         navArgument("mediaType") { type = NavType.StringType }
                     )
                 ) { backStackEntry ->
-                    val mediaId = backStackEntry.arguments?.getString("mediaId") ?: ""
+                    val rawMediaId = backStackEntry.arguments?.getString("mediaId") ?: ""
+                    val mediaId = try {
+                        java.net.URLDecoder.decode(rawMediaId, "UTF-8")
+                    } catch (_: Exception) {
+                        rawMediaId
+                    }
                     val mediaType = backStackEntry.arguments?.getString("mediaType") ?: "MOVIE"
                     val detailsViewModel = DetailsViewModel(repository, mediaId, mediaType)
 
@@ -334,6 +389,16 @@ fun AppNavigation(
                                 season = ep.seasonNumber,
                                 episode = ep.episodeNumber
                             )
+                        },
+                        onNavigateToDownloads = {
+                            libraryViewModel.selectTab(LibraryTab.DOWNLOADS)
+                            navController.navigate(Screen.Library.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
                     )
                 }
@@ -348,7 +413,16 @@ fun AppNavigation(
                     val categoryKey = backStackEntry.arguments?.getString("categoryKey") ?: "popular_movies"
                     val titleRaw = backStackEntry.arguments?.getString("title") ?: "Popular Movies"
                     val title = java.net.URLDecoder.decode(titleRaw, "UTF-8")
-                    val categoryViewModel = CategoryMediaViewModel(repository, categoryKey, title)
+                    val categoryViewModel: CategoryMediaViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                        viewModelStoreOwner = backStackEntry,
+                        key = "category_${categoryKey}_$title",
+                        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                                @Suppress("UNCHECKED_CAST")
+                                return CategoryMediaViewModel(repository, categoryKey, title) as T
+                            }
+                        }
+                    )
 
                     CategoryMediaScreen(
                         viewModel = categoryViewModel,

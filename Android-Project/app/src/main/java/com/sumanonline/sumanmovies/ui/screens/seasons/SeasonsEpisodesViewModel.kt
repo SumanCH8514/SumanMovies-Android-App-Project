@@ -1,10 +1,17 @@
 package com.sumanonline.sumanmovies.ui.screens.seasons
 
+import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sumanonline.sumanmovies.data.models.Episode
+import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
+import com.sumanonline.sumanmovies.data.models.ServerState
+import com.sumanonline.sumanmovies.data.models.StreamMirror
+import com.sumanonline.sumanmovies.data.models.StreamSource
+import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.repository.MediaRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,10 +21,18 @@ import kotlinx.coroutines.launch
 data class SeasonsEpisodesUiState(
     val mediaTitle: String = "",
     val mediaId: String = "",
+    val posterUrl: String? = null,
+    val releaseYear: String? = null,
     val selectedSeason: Int = 1,
     val seasons: List<Season> = emptyList(),
     val episodes: List<Episode> = emptyList(),
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val showDownloadModal: Boolean = false,
+    val selectedEpisodeForDownload: Episode? = null,
+    val downloadModalServer: StreamingServer = StreamingServer.FOURKHDHUB,
+    val serverStates: Map<StreamingServer, ServerState> = emptyMap(),
+    val isDownloadModalLoading: Boolean = false,
+    val resolvingStreamUrl: String? = null
 )
 
 class SeasonsEpisodesViewModel(
@@ -54,7 +69,11 @@ class SeasonsEpisodesViewModel(
                 Season(3, "Season 3", 8)
             )
 
-            _uiState.value = _uiState.value.copy(seasons = seasonsList)
+            _uiState.value = _uiState.value.copy(
+                seasons = seasonsList,
+                posterUrl = details?.posterUrl,
+                releaseYear = details?.releaseDate?.take(4) ?: details?.year
+            )
             loadSeasonEpisodes(1)
         }
     }
@@ -65,39 +84,121 @@ class SeasonsEpisodesViewModel(
         loadSeasonEpisodes(seasonNumber)
     }
 
-    fun downloadEpisode(context: android.content.Context, episode: Episode) {
+    fun openDownloadModal(episode: Episode) {
+        _uiState.value = _uiState.value.copy(
+            showDownloadModal = true,
+            selectedEpisodeForDownload = episode,
+            serverStates = emptyMap()
+        )
+        fetchDownloadQualities(_uiState.value.downloadModalServer, episode)
+    }
+
+    fun closeDownloadModal() {
+        _uiState.value = _uiState.value.copy(
+            showDownloadModal = false,
+            selectedEpisodeForDownload = null,
+            resolvingStreamUrl = null
+        )
+    }
+
+    fun selectDownloadServer(server: StreamingServer) {
+        _uiState.value = _uiState.value.copy(downloadModalServer = server)
+        val episode = _uiState.value.selectedEpisodeForDownload ?: return
+        val currentStreams = _uiState.value.serverStates[server]?.streams
+        if (currentStreams.isNullOrEmpty()) {
+            fetchDownloadQualities(server, episode)
+        }
+    }
+
+    fun retryDownloadFetch() {
+        val episode = _uiState.value.selectedEpisodeForDownload ?: return
+        fetchDownloadQualities(_uiState.value.downloadModalServer, episode)
+    }
+
+    fun fetchDownloadQualities(server: StreamingServer, episode: Episode) {
         viewModelScope.launch {
-            android.widget.Toast.makeText(context, "Resolving episode stream...", android.widget.Toast.LENGTH_SHORT).show()
-            val (streams, _) = repository.resolveAllStreams(
+            _uiState.value = _uiState.value.copy(isDownloadModalLoading = true)
+            val resolved = repository.resolveServer(
+                server = server,
                 title = _uiState.value.mediaTitle,
                 season = episode.seasonNumber,
                 episode = episode.episodeNumber,
-                providerId = _uiState.value.mediaId
+                providerId = _uiState.value.mediaId,
+                releaseYear = _uiState.value.releaseYear
             )
-            var targetStream = streams.firstOrNull { it.directFile && !repository.isLockerUrl(it.url) } ?: streams.firstOrNull()
-            if (targetStream != null && (targetStream.isLockerUrl || repository.isLockerUrl(targetStream.url))) {
+            val updated = _uiState.value.serverStates.toMutableMap()
+            updated[server] = resolved
+            _uiState.value = _uiState.value.copy(
+                serverStates = updated,
+                isDownloadModalLoading = false
+            )
+        }
+    }
+
+    fun downloadStreamOption(
+        context: Context,
+        stream: StreamSource,
+        mirror: StreamMirror? = null,
+        onComplete: () -> Unit = {}
+    ) {
+        val episode = _uiState.value.selectedEpisodeForDownload ?: return
+        val targetStream = if (mirror != null && mirror.url.isNotBlank()) {
+            stream.copy(
+                url = mirror.url,
+                mirrorName = mirror.name,
+                isLockerUrl = mirror.isLocker || repository.isLockerUrl(mirror.url)
+            )
+        } else {
+            stream.copy(
+                isLockerUrl = stream.isLockerUrl || repository.isLockerUrl(stream.url)
+            )
+        }
+
+        val isLocker = targetStream.isLockerUrl || repository.isLockerUrl(targetStream.url)
+
+        if (isLocker) {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(resolvingStreamUrl = targetStream.url)
                 val resolved = repository.resolveLockerUrl(targetStream.url)
+                _uiState.value = _uiState.value.copy(resolvingStreamUrl = null)
+
                 if (resolved != null && resolved.url.isNotBlank() && !repository.isLockerUrl(resolved.url)) {
-                    targetStream = targetStream.copy(
+                    val finalStream = targetStream.copy(
                         url = resolved.url,
                         headers = resolved.headers,
                         format = resolved.format,
                         codec = resolved.codec,
                         isLockerUrl = false
                     )
+                    startDownloadInternal(context, finalStream, episode)
+                    onComplete()
+                } else {
+                    Toast.makeText(context, "Could not resolve direct CDN download link. Try another mirror.", Toast.LENGTH_SHORT).show()
                 }
             }
-            if (targetStream != null && !repository.isLockerUrl(targetStream.url)) {
-                val item = com.sumanonline.sumanmovies.data.models.MediaItem(
-                    id = _uiState.value.mediaId,
-                    title = _uiState.value.mediaTitle,
-                    mediaType = MediaType.SERIES
-                )
-                repository.startDownload(item, targetStream, episode)
-                android.widget.Toast.makeText(context, "Downloading S${episode.seasonNumber}E${episode.episodeNumber}", android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                android.widget.Toast.makeText(context, "No stream available for download", android.widget.Toast.LENGTH_SHORT).show()
-            }
+        } else {
+            startDownloadInternal(context, targetStream, episode)
+            onComplete()
+        }
+    }
+
+    private fun startDownloadInternal(
+        context: Context,
+        stream: StreamSource,
+        episode: Episode
+    ) {
+        viewModelScope.launch {
+            val epPart = " - S${episode.seasonNumber}E${episode.episodeNumber}"
+            val epTitlePart = if (episode.title.isNotBlank()) " • ${episode.title}" else ""
+            val item = MediaItem(
+                id = _uiState.value.mediaId,
+                title = "${_uiState.value.mediaTitle}$epPart$epTitlePart",
+                posterUrl = episode.stillUrl ?: _uiState.value.posterUrl,
+                mediaType = MediaType.SERIES
+            )
+            repository.startDownload(item, stream, episode)
+            Toast.makeText(context, "Downloading S${episode.seasonNumber}E${episode.episodeNumber}", Toast.LENGTH_SHORT).show()
+            _uiState.value = _uiState.value.copy(showDownloadModal = false, resolvingStreamUrl = null)
         }
     }
 

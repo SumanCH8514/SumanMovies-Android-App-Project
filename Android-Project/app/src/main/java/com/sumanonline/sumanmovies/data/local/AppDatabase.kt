@@ -13,7 +13,7 @@ import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
 
 @Database(
     entities = [WatchHistoryEntity::class, FavoriteEntity::class, DownloadEntity::class],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

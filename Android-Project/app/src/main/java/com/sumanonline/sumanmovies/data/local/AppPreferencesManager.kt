@@ -36,10 +36,10 @@ class AppPreferencesManager(private val context: Context) {
     private val _selectedAccent = MutableStateFlow(
         try {
             AppAccent.valueOf(
-                prefs.getString(KEY_SELECTED_ACCENT, AppAccent.ROYAL_INDIGO.name) ?: AppAccent.ROYAL_INDIGO.name
+                prefs.getString(KEY_SELECTED_ACCENT, AppAccent.SUNSET_GOLD.name) ?: AppAccent.SUNSET_GOLD.name
             )
         } catch (_: Exception) {
-            AppAccent.ROYAL_INDIGO
+            AppAccent.SUNSET_GOLD
         }
     )
     val selectedAccent: StateFlow<AppAccent> = _selectedAccent.asStateFlow()
@@ -86,10 +86,35 @@ class AppPreferencesManager(private val context: Context) {
     )
     val preferredSubtitleLanguage: StateFlow<String> = _preferredSubtitleLanguage.asStateFlow()
 
+    private val _preferredAudioLanguage = MutableStateFlow(
+        prefs.getString(KEY_PREFERRED_AUDIO_LANG, "English") ?: "English"
+    )
+    val preferredAudioLanguage: StateFlow<String> = _preferredAudioLanguage.asStateFlow()
+
     private val _subtitlesByDefault = MutableStateFlow(
         prefs.getBoolean(KEY_SUBTITLES_BY_DEFAULT, true)
     )
     val subtitlesByDefault: StateFlow<Boolean> = _subtitlesByDefault.asStateFlow()
+
+    private val _defaultPlaybackSpeed = MutableStateFlow(
+        prefs.getFloat(KEY_DEFAULT_PLAYBACK_SPEED, 1.0f)
+    )
+    val defaultPlaybackSpeed: StateFlow<Float> = _defaultPlaybackSpeed.asStateFlow()
+
+    private val _doubleTapSeekDuration = MutableStateFlow(
+        prefs.getInt(KEY_DOUBLE_TAP_SEEK_DURATION, 10)
+    )
+    val doubleTapSeekDuration: StateFlow<Int> = _doubleTapSeekDuration.asStateFlow()
+
+    private val _backgroundPlayback = MutableStateFlow(
+        prefs.getBoolean(KEY_BACKGROUND_PLAYBACK, false)
+    )
+    val backgroundPlayback: StateFlow<Boolean> = _backgroundPlayback.asStateFlow()
+
+    private val _hardwareAcceleration = MutableStateFlow(
+        prefs.getBoolean(KEY_HARDWARE_ACCELERATION, true)
+    )
+    val hardwareAcceleration: StateFlow<Boolean> = _hardwareAcceleration.asStateFlow()
 
     private val _downloadQuality = MutableStateFlow(
         prefs.getString(KEY_DOWNLOAD_QUALITY, "Auto") ?: "Auto"
@@ -105,6 +130,22 @@ class AppPreferencesManager(private val context: Context) {
         prefs.getBoolean(KEY_WIFI_ONLY, false)
     )
     val wifiOnly: StateFlow<Boolean> = _wifiOnly.asStateFlow()
+
+    init {
+        if (!prefs.getBoolean(KEY_DEFAULT_PREFS_INITIALIZED, false)) {
+            prefs.edit()
+                .putString(KEY_APPEARANCE_MODE, AppearanceMode.DARK.name)
+                .putString(KEY_HOME_TABS_STYLE, HomeTabsStyle.TOP_GLASS.name)
+                .putString(KEY_PLAYER_UI_STYLE, PlayerUiStyle.MODERN.name)
+                .putString(KEY_SELECTED_ACCENT, AppAccent.SUNSET_GOLD.name)
+                .putBoolean(KEY_DEFAULT_PREFS_INITIALIZED, true)
+                .apply()
+            _appearanceMode.value = AppearanceMode.DARK
+            _homeTabsStyle.value = HomeTabsStyle.TOP_GLASS
+            _playerUiStyle.value = PlayerUiStyle.MODERN
+            _selectedAccent.value = AppAccent.SUNSET_GOLD
+        }
+    }
 
     fun setUserName(name: String) {
         val clean = name.trim().ifBlank { "Suman User" }
@@ -152,9 +193,34 @@ class AppPreferencesManager(private val context: Context) {
         _preferredSubtitleLanguage.value = lang
     }
 
+    fun setPreferredAudioLanguage(lang: String) {
+        prefs.edit().putString(KEY_PREFERRED_AUDIO_LANG, lang).apply()
+        _preferredAudioLanguage.value = lang
+    }
+
     fun setSubtitlesByDefault(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SUBTITLES_BY_DEFAULT, enabled).apply()
         _subtitlesByDefault.value = enabled
+    }
+
+    fun setDefaultPlaybackSpeed(speed: Float) {
+        prefs.edit().putFloat(KEY_DEFAULT_PLAYBACK_SPEED, speed).apply()
+        _defaultPlaybackSpeed.value = speed
+    }
+
+    fun setDoubleTapSeekDuration(duration: Int) {
+        prefs.edit().putInt(KEY_DOUBLE_TAP_SEEK_DURATION, duration).apply()
+        _doubleTapSeekDuration.value = duration
+    }
+
+    fun setBackgroundPlayback(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_BACKGROUND_PLAYBACK, enabled).apply()
+        _backgroundPlayback.value = enabled
+    }
+
+    fun setHardwareAcceleration(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HARDWARE_ACCELERATION, enabled).apply()
+        _hardwareAcceleration.value = enabled
     }
 
     fun setDownloadQuality(quality: String) {
@@ -259,9 +325,15 @@ class AppPreferencesManager(private val context: Context) {
         private const val KEY_SELECTED_LANGUAGE = "key_selected_language"
         private const val KEY_AUTO_PLAY_NEXT = "key_auto_play_next"
         private const val KEY_PREFERRED_SUBTITLE_LANG = "key_preferred_subtitle_lang"
+        private const val KEY_PREFERRED_AUDIO_LANG = "key_preferred_audio_lang"
         private const val KEY_SUBTITLES_BY_DEFAULT = "key_subtitles_by_default"
+        private const val KEY_DEFAULT_PLAYBACK_SPEED = "key_default_playback_speed"
+        private const val KEY_DOUBLE_TAP_SEEK_DURATION = "key_double_tap_seek_duration"
+        private const val KEY_BACKGROUND_PLAYBACK = "key_background_playback"
+        private const val KEY_HARDWARE_ACCELERATION = "key_hardware_acceleration"
         private const val KEY_DOWNLOAD_QUALITY = "key_download_quality"
         private const val KEY_AUTO_DELETE_WATCHED = "key_auto_delete_watched"
         private const val KEY_WIFI_ONLY = "key_wifi_only"
+        private const val KEY_DEFAULT_PREFS_INITIALIZED = "key_default_prefs_initialized_v2"
     }
 }

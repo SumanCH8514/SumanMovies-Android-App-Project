@@ -158,10 +158,12 @@ fun Play4UScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .height(46.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(CardDark)
                     .border(BorderStroke(1.dp, CardElevated), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -177,8 +179,15 @@ fun Play4UScreen(
                     BasicTextField(
                         value = state.query,
                         onValueChange = { viewModel.onQueryChange(it) },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onSearch = { viewModel.searchImmediately() }
+                        ),
                         modifier = Modifier.weight(1f),
                         singleLine = true,
+                        maxLines = 1,
                         textStyle = TextStyle(
                             color = TextPrimary,
                             fontSize = 14.sp
@@ -189,7 +198,9 @@ fun Play4UScreen(
                                 Text(
                                     text = "Search Play4U titles (e.g. Beast, Dune, Avengers)...",
                                     color = TextMuted,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                             innerTextField()

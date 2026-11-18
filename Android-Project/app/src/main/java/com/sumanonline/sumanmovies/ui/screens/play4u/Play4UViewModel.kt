@@ -43,6 +43,7 @@ class Play4UViewModel(
     val uiState: StateFlow<Play4UUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+    private val debounceDelayMs: Long = 1000L
 
     init {
         loadCatalog(page = 1)
@@ -70,26 +71,41 @@ class Play4UViewModel(
         }
 
         searchJob = viewModelScope.launch {
-            delay(350)
-            _uiState.value = _uiState.value.copy(isSearching = true)
-            try {
-                val results = repository.searchPlay4U(newQuery.trim())
-                _uiState.value = _uiState.value.copy(
-                    items = results,
-                    totalCount = results.size,
-                    isSearching = false,
-                    errorMessage = if (results.isEmpty()) "No titles found on Play4U for '$newQuery'" else null
-                )
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    isSearching = false,
-                    errorMessage = e.message ?: "Failed to search Play4U"
-                )
-            }
+            delay(debounceDelayMs)
+            executeSearch(newQuery.trim())
+        }
+    }
+
+    fun searchImmediately(overrideQuery: String? = null) {
+        val targetQuery = (overrideQuery ?: _uiState.value.query).trim()
+        if (targetQuery.isBlank()) return
+        searchJob?.cancel()
+        _uiState.value = _uiState.value.copy(query = targetQuery)
+        searchJob = viewModelScope.launch {
+            executeSearch(targetQuery)
+        }
+    }
+
+    private suspend fun executeSearch(query: String) {
+        _uiState.value = _uiState.value.copy(isSearching = true)
+        try {
+            val results = repository.searchPlay4U(query)
+            _uiState.value = _uiState.value.copy(
+                items = results,
+                totalCount = results.size,
+                isSearching = false,
+                errorMessage = if (results.isEmpty()) "No titles found on Play4U for '$query'" else null
+            )
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                isSearching = false,
+                errorMessage = e.message ?: "Failed to search Play4U"
+            )
         }
     }
 
     fun clearSearch() {
+        searchJob?.cancel()
         _uiState.value = _uiState.value.copy(query = "", isSearching = false)
         loadCatalog(tab = _uiState.value.selectedTab, page = 1)
     }
@@ -102,7 +118,7 @@ class Play4UViewModel(
 
     fun refresh() {
         if (_uiState.value.query.isNotBlank()) {
-            onQueryChange(_uiState.value.query)
+            searchImmediately(_uiState.value.query)
         } else {
             loadCatalog(tab = _uiState.value.selectedTab, page = 1)
         }

@@ -15,7 +15,12 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val autoPlayNextEpisode: Boolean = true,
     val preferredSubtitleLanguage: String = "English",
+    val preferredAudioLanguage: String = "English",
     val subtitlesByDefault: Boolean = true,
+    val defaultPlaybackSpeed: Float = 1.0f,
+    val doubleTapSeekDuration: Int = 10,
+    val backgroundPlayback: Boolean = false,
+    val hardwareAcceleration: Boolean = true,
     val downloadQuality: String = "Auto",
     val autoDeleteWatchedDownloads: Boolean = false,
     val wifiOnly: Boolean = false,
@@ -27,6 +32,11 @@ data class SettingsUiState(
     val showUpdateDialog: Boolean = false,
     val showUpToDateDialog: Boolean = false,
     val showSubtitleLanguageDialog: Boolean = false,
+    val showAudioLanguageDialog: Boolean = false,
+    val showPlaybackSpeedDialog: Boolean = false,
+    val showSeekDurationDialog: Boolean = false,
+    val showClearSearchHistoryDialog: Boolean = false,
+    val showClearWatchHistoryDialog: Boolean = false,
     val showDownloadQualityDialog: Boolean = false,
     val userToastMessage: String? = null
 )
@@ -41,7 +51,12 @@ class SettingsViewModel(
         SettingsUiState(
             autoPlayNextEpisode = preferencesManager.autoPlayNextEpisode.value,
             preferredSubtitleLanguage = preferencesManager.preferredSubtitleLanguage.value,
+            preferredAudioLanguage = preferencesManager.preferredAudioLanguage.value,
             subtitlesByDefault = preferencesManager.subtitlesByDefault.value,
+            defaultPlaybackSpeed = preferencesManager.defaultPlaybackSpeed.value,
+            doubleTapSeekDuration = preferencesManager.doubleTapSeekDuration.value,
+            backgroundPlayback = preferencesManager.backgroundPlayback.value,
+            hardwareAcceleration = preferencesManager.hardwareAcceleration.value,
             downloadQuality = preferencesManager.downloadQuality.value,
             autoDeleteWatchedDownloads = preferencesManager.autoDeleteWatchedDownloads.value,
             wifiOnly = preferencesManager.wifiOnly.value,
@@ -88,11 +103,47 @@ class SettingsViewModel(
         _uiState.value = _uiState.value.copy(wifiOnly = newVal)
     }
 
+    fun toggleBackgroundPlayback() {
+        val newVal = !_uiState.value.backgroundPlayback
+        preferencesManager.setBackgroundPlayback(newVal)
+        _uiState.value = _uiState.value.copy(backgroundPlayback = newVal)
+    }
+
+    fun toggleHardwareAcceleration() {
+        val newVal = !_uiState.value.hardwareAcceleration
+        preferencesManager.setHardwareAcceleration(newVal)
+        _uiState.value = _uiState.value.copy(hardwareAcceleration = newVal)
+    }
+
     fun setPreferredSubtitleLanguage(lang: String) {
         preferencesManager.setPreferredSubtitleLanguage(lang)
         _uiState.value = _uiState.value.copy(
             preferredSubtitleLanguage = lang,
             showSubtitleLanguageDialog = false
+        )
+    }
+
+    fun setPreferredAudioLanguage(lang: String) {
+        preferencesManager.setPreferredAudioLanguage(lang)
+        _uiState.value = _uiState.value.copy(
+            preferredAudioLanguage = lang,
+            showAudioLanguageDialog = false
+        )
+    }
+
+    fun setDefaultPlaybackSpeed(speed: Float) {
+        preferencesManager.setDefaultPlaybackSpeed(speed)
+        _uiState.value = _uiState.value.copy(
+            defaultPlaybackSpeed = speed,
+            showPlaybackSpeedDialog = false
+        )
+    }
+
+    fun setDoubleTapSeekDuration(duration: Int) {
+        preferencesManager.setDoubleTapSeekDuration(duration)
+        _uiState.value = _uiState.value.copy(
+            doubleTapSeekDuration = duration,
+            showSeekDurationDialog = false
         )
     }
 
@@ -108,6 +159,26 @@ class SettingsViewModel(
         _uiState.value = _uiState.value.copy(showSubtitleLanguageDialog = show)
     }
 
+    fun setShowAudioLanguageDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showAudioLanguageDialog = show)
+    }
+
+    fun setShowPlaybackSpeedDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showPlaybackSpeedDialog = show)
+    }
+
+    fun setShowSeekDurationDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showSeekDurationDialog = show)
+    }
+
+    fun setShowClearSearchHistoryDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showClearSearchHistoryDialog = show)
+    }
+
+    fun setShowClearWatchHistoryDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showClearWatchHistoryDialog = show)
+    }
+
     fun setShowDownloadQualityDialog(show: Boolean) {
         _uiState.value = _uiState.value.copy(showDownloadQualityDialog = show)
     }
@@ -120,17 +191,19 @@ class SettingsViewModel(
         )
     }
 
-    fun clearSearchHistory() {
+    fun confirmClearSearchHistory() {
         repository.clearSearchHistory()
         _uiState.value = _uiState.value.copy(
+            showClearSearchHistoryDialog = false,
             userToastMessage = "Search history cleared"
         )
     }
 
-    fun clearWatchHistory() {
+    fun confirmClearWatchHistory() {
         viewModelScope.launch {
             repository.clearHistory()
             _uiState.value = _uiState.value.copy(
+                showClearWatchHistoryDialog = false,
                 userToastMessage = "Watch history cleared"
             )
         }

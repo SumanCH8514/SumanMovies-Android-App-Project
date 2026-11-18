@@ -109,8 +109,10 @@ fun SectionHeader(
 fun VerticalPosterCard(
     item: MediaItem,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    rank: Int? = null
 ) {
+    val accent = LocalAppAccent.current.color
     Column(
         modifier = modifier
             .width(115.dp)
@@ -151,6 +153,32 @@ fun VerticalPosterCard(
                     tint = Color.White.copy(alpha = 0.85f),
                     modifier = Modifier.size(14.dp)
                 )
+            }
+
+            if (rank != null) {
+                Box(
+                    modifier = Modifier
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    accent,
+                                    accent.copy(alpha = 0.8f)
+                                )
+                            )
+                        )
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .align(Alignment.TopEnd),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "#$rank",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
             }
         }
 
@@ -209,7 +237,23 @@ fun ContinueWatchingCard(
         if (pct > 0) "$pct% watched" else "In progress"
     }
 
-    val isSeries = item.mediaType.equals("SERIES", ignoreCase = true) || item.mediaType.equals("ANIME", ignoreCase = true)
+    val isSeries = item.mediaType.equals("SERIES", ignoreCase = true) ||
+            item.mediaType.equals("ANIME", ignoreCase = true) ||
+            item.mediaType.equals("DRAMA", ignoreCase = true)
+
+    val cleanBaseTitle = item.title
+        .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+        .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+        .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+        .trim()
+        .ifBlank { item.title }
+
+    val displayTitle = if (isSeries) {
+        "$cleanBaseTitle - S${item.seasonNumber}E${item.episodeNumber}"
+    } else {
+        item.title
+    }
+
     val subtitleText = if (isSeries) {
         "S${item.seasonNumber} • E${item.episodeNumber} • $remainingFormatted"
     } else {
@@ -451,7 +495,7 @@ fun ContinueWatchingCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = item.title,
+                    text = displayTitle,
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,

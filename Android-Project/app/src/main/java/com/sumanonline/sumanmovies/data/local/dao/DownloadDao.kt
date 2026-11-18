@@ -30,6 +30,9 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = :status WHERE id = :id")
     suspend fun updateStatusById(id: String, status: String)
 
+    @Query("UPDATE downloads SET status = :status, failureReason = :failureReason WHERE id = :id")
+    suspend fun updateFailureStatusById(id: String, status: String, failureReason: String?)
+
     @Query("SELECT COUNT(*) FROM downloads")
     fun getTotalDownloadsCount(): Flow<Int>
 

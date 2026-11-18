@@ -15,14 +15,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 data class ProfileUiState(
-    val name: String = "Suman User",
+    val name: String = "SumanMovies User",
     val avatarLetter: String = "S",
-    val statusBadge: String = "Local Account • Offline Ready",
+    val statusBadge: String = "Local Account • Change it",
     val bookmarksCount: Int = 0,
     val historyCount: Int = 0,
     val downloadsCount: Int = 0,
     val appearanceMode: AppearanceMode = AppearanceMode.DARK,
-    val selectedAccent: AppAccent = AppAccent.ROYAL_INDIGO,
+    val selectedAccent: AppAccent = AppAccent.SUNSET_GOLD,
     val isCheckingForUpdates: Boolean = false,
     val updateInfo: AppUpdateInfo? = null,
     val showUpdateDialog: Boolean = false,

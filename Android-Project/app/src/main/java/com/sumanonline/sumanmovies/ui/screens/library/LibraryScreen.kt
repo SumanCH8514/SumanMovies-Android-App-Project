@@ -196,12 +196,10 @@ fun LibraryScreen(
                                 }
                                 .padding(12.dp)
                         ) {
-                            // Top Section: Poster + Info (Title marquee + Quality Badge + Status + Progress)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Poster with Play button overlay
                                 Box(
                                     modifier = Modifier
                                         .width(64.dp)
@@ -219,7 +217,6 @@ fun LibraryScreen(
                                         )
                                     }
 
-                                    // Play button overlay on artwork
                                     Box(
                                         modifier = Modifier
                                             .size(32.dp)
@@ -255,9 +252,7 @@ fun LibraryScreen(
 
                                 Spacer(modifier = Modifier.width(14.dp))
 
-                                // Content Column: Spans the full remaining width without being squeezed!
                                 Column(modifier = Modifier.weight(1f)) {
-                                    // Title with marquee style so it shows fully!
                                     Text(
                                         text = dl.title,
                                         color = TextPrimary,
@@ -274,7 +269,6 @@ fun LibraryScreen(
 
                                     Spacer(modifier = Modifier.height(5.dp))
 
-                                    // Quality badge beneath title + Status Indicator
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.fillMaxWidth()
@@ -317,7 +311,7 @@ fun LibraryScreen(
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                             }
-                                            else -> { // DOWNLOADING
+                                            else -> {
                                                 Text(
                                                     text = "DOWNLOADING",
                                                     color = accent,
@@ -337,25 +331,37 @@ fun LibraryScreen(
 
                                     Spacer(modifier = Modifier.height(4.dp))
 
-                                    // File Size & Progress summary
+                                    val failureReason = liveProgress?.failureReason ?: dl.failureReason
+
                                     Text(
-                                        text = if (liveStatus == "COMPLETED") {
-                                            val sizeStr = if (totalBytes > 0L) formatBytes(totalBytes) else if (downloadedBytes > 0L) formatBytes(downloadedBytes) else ""
-                                            if (sizeStr.isNotBlank()) "$sizeStr • Offline video" else "Offline video"
-                                        } else {
-                                            if (totalBytes > 0L) {
-                                                "${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} ($percent%)"
-                                            } else if (downloadedBytes > 0L) {
-                                                "${formatBytes(downloadedBytes)} downloaded"
-                                            } else {
-                                                "Starting download..."
+                                        text = when (liveStatus) {
+                                            "COMPLETED" -> {
+                                                val sizeStr = if (totalBytes > 0L) formatBytes(totalBytes) else if (downloadedBytes > 0L) formatBytes(downloadedBytes) else ""
+                                                if (sizeStr.isNotBlank()) "$sizeStr • Offline video" else "Offline video"
+                                            }
+                                            "FAILED" -> {
+                                                if (!failureReason.isNullOrBlank()) {
+                                                    "Failed: $failureReason"
+                                                } else {
+                                                    "Download failed • Tap Resume to retry"
+                                                }
+                                            }
+                                            else -> {
+                                                if (totalBytes > 0L) {
+                                                    "${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} ($percent%)"
+                                                } else if (downloadedBytes > 0L) {
+                                                    "${formatBytes(downloadedBytes)} downloaded"
+                                                } else {
+                                                    "Starting download..."
+                                                }
                                             }
                                         },
-                                        color = TextMuted,
-                                        fontSize = 12.sp
+                                        color = if (liveStatus == "FAILED") Color(0xFFF87171) else TextMuted,
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
                                     )
 
-                                    // Progress Bar
                                     if (liveStatus != "COMPLETED") {
                                         Spacer(modifier = Modifier.height(8.dp))
                                         LinearProgressIndicator(
@@ -371,7 +377,6 @@ fun LibraryScreen(
                                 }
                             }
 
-                            // Bottom Section: Distinct Action Row
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -406,7 +411,7 @@ fun LibraryScreen(
                                         tint = Color(0xFFEF4444),
                                         onClick = { viewModel.deleteDownload(dl) }
                                     )
-                                } else { // COMPLETED
+                                } else {
                                     CardActionButton(
                                         icon = Icons.Default.PlayArrow,
                                         label = "Play",
