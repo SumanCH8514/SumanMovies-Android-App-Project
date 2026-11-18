@@ -99,30 +99,29 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register("deployAndPushNewPlayerApk") {
-    dependsOn("assembleDebug")
+tasks.register("gitPush") {
     doLast {
         val root = rootProject.file("..")
-        val apkSrc = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
-        val apkDest = root.resolve("apk/SumanMovies-v1.0.0-new-player.apk")
-        val apkDebug = root.resolve("apk/SumanMovies-v1.0.0-debug.apk")
-        apkDest.parentFile.mkdirs()
-        apkSrc.copyTo(apkDest, overwrite = true)
-        apkSrc.copyTo(apkDebug, overwrite = true)
-
-        fun runCmd(vararg args: String): String {
+        fun runCmd(vararg args: String) {
             val p = ProcessBuilder(*args).directory(root).start()
-            val out = p.inputStream.bufferedReader().readText()
-            val err = p.errorStream.bufferedReader().readText()
             p.waitFor()
-            return "$out\n$err".trim()
         }
-        val addRes = runCmd("git", "add", "-A")
-        val commitRes = runCmd("git", "commit", "-m", "release: add SumanMovies-v1.0.0-new-player.apk")
-        val pushRes = runCmd("git", "push", "origin", "main")
-        root.resolve("scratch_git.txt").writeText("ADD:\n$addRes\nCOMMIT:\n$commitRes\nPUSH:\n$pushRes")
+        runCmd("git", "add", "-A")
+        runCmd("git", "commit", "-m", "docs: update README with SumanMovies-v1.0.0-new-player.apk download link")
+        runCmd("git", "push", "origin", "main")
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 
