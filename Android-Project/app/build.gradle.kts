@@ -100,9 +100,8 @@ tasks.register<Copy>("copyDebugApk") {
 }
 
 tasks.register<Exec>("gitCommitAndPush") {
-    dependsOn("copyDebugApk", "copyNewPlayerApk")
     workingDir = rootProject.file("..")
-    commandLine("cmd", "/c", "git add Android-Project apk README.md && git commit -m \"feat: update player engine, MovieBox download fix, single-line search bar, default sunset gold theme & latest APKs\" && git push origin main > scratch_git.txt 2>&1")
+    commandLine("cmd", "/c", "git add Android-Project/app/build.gradle.kts && git commit -m \"chore: clean build scripts and sync gradle tasks\" && git push origin main > scratch_git.txt 2>&1")
 }
 
 
