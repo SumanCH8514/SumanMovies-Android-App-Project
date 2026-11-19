@@ -87,7 +87,7 @@ class MovieBoxViewModel(
     private suspend fun executeSearch(query: String) {
         _uiState.value = _uiState.value.copy(isSearching = true)
         try {
-            val results = repository.searchMovieBox(query)
+            val results = repository.searchMovieBox(query).distinctBy { it.id }
             _uiState.value = _uiState.value.copy(
                 items = results,
                 totalCount = results.size,
@@ -138,7 +138,7 @@ class MovieBoxViewModel(
                     genre = tab.genre,
                     page = page
                 )
-                val combined = if (append) _uiState.value.items + newItems else newItems
+                val combined = (if (append) _uiState.value.items + newItems else newItems).distinctBy { it.id }
                 _uiState.value = _uiState.value.copy(
                     items = combined,
                     totalCount = found,

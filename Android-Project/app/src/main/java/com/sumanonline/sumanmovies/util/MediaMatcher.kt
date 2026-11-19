@@ -37,7 +37,10 @@ object MediaMatcher {
             .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
             .replace(Regex("""(?i)\(season\s*\d+\)"""), " ")
             .replace(Regex("""(?i)\[season\s*\d+\]"""), " ")
+            .replace(Regex("""(?i)\bseason\s*\d+\s*[-–]\s*\d+\b"""), " ")
             .replace(Regex("""(?i)\bseason\s*\d+\b"""), " ")
+            .replace(Regex("""(?i)\bs\d{1,2}\s*[-–]\s*s?\d{1,2}\b"""), " ")
+            .replace(Regex("""(?i)\bs\d{1,2}\b"""), " ")
             .replace(Regex("""(?i)\[?\s*ep\s*[-–]?\s*\d+\s*(?:added)?\s*\]?"""), " ")
             .replace(Regex("""(?i)\[?\s*all\s+episodes\s*\]?"""), " ")
             .replace(Regex("""(?i)\[\s*(?:nf|primevideo|netflix|hotstar|disney|zee5|sonyliv)\s+series\s*\]"""), " ")
@@ -153,28 +156,40 @@ object MediaMatcher {
             }
         }
 
+        val candidateIsSeries = candidate.mediaType == MediaType.SERIES ||
+            candidate.title.contains("Season", ignoreCase = true) ||
+            candidate.title.contains("S0", ignoreCase = true) ||
+            Regex("""(?i)\bs\d{1,2}\b""").containsMatchIn(candidate.title)
+
         val parsedTargetYear = targetYear?.toIntOrNull()
         val parsedCandidateYear = candidate.year?.toIntOrNull()
             ?: Regex("""\b(19\d{2}|20\d{2})\b""").find(candidate.title)?.value?.toIntOrNull()
 
         if (parsedTargetYear != null && parsedCandidateYear != null) {
-            val diff = abs(parsedTargetYear - parsedCandidateYear)
-            when (diff) {
-                0 -> score += 500
-                1 -> score += 150
-                else -> {
-                    if (isHdHub && normCandidate.contains(normTarget)) {
-                        score -= 200
-                    } else {
-                        score -= 600
+            val isTvContext = isSeries || season > 0 || candidateIsSeries
+            if (isTvContext) {
+                val diff = parsedCandidateYear - parsedTargetYear
+                when {
+                    diff == 0 -> score += 500
+                    diff > 0 -> score += 350
+                    diff == -1 -> score += 150
+                    else -> score -= 300
+                }
+            } else {
+                val diff = abs(parsedTargetYear - parsedCandidateYear)
+                when (diff) {
+                    0 -> score += 500
+                    1 -> score += 150
+                    else -> {
+                        if (isHdHub && normCandidate.contains(normTarget)) {
+                            score -= 200
+                        } else {
+                            score -= 600
+                        }
                     }
                 }
             }
         }
-
-        val candidateIsSeries = candidate.mediaType == MediaType.SERIES ||
-            candidate.title.contains("Season", ignoreCase = true) ||
-            candidate.title.contains("S0", ignoreCase = true)
 
         if (isSeries || season > 0) {
             if (candidateIsSeries) {
@@ -183,9 +198,19 @@ object MediaMatcher {
                 score -= 400
             }
             if (season > 0) {
-                val seasonRegex = Regex("""\b(?:Season\s*0?|S0?)$season\b""", RegexOption.IGNORE_CASE)
-                if (seasonRegex.containsMatchIn(candidate.title)) {
+                val exactSeasonRegex = Regex("""\b(?:Season\s*0?|S0?)$season\b""", RegexOption.IGNORE_CASE)
+                val rangeRegex = Regex("""\b(?:Season\s*0?|S0?)(\d{1,2})\s*[-–]\s*(?:Season\s*0?|S0?)?(\d{1,2})\b""", RegexOption.IGNORE_CASE)
+                val rangeMatch = rangeRegex.find(candidate.title)
+                if (rangeMatch != null) {
+                    val sStart = rangeMatch.groupValues[1].toIntOrNull() ?: 0
+                    val sEnd = rangeMatch.groupValues[2].toIntOrNull() ?: 0
+                    if (season in sStart..sEnd) {
+                        score += 400
+                    }
+                } else if (exactSeasonRegex.containsMatchIn(candidate.title)) {
                     score += 400
+                } else if (candidate.provider.contains("moviebox", ignoreCase = true) || candidate.id.startsWith("moviebox:", ignoreCase = true)) {
+                    score += 250
                 }
             }
         } else {

@@ -88,16 +88,19 @@ class BackendRepository(baseUrl: String = "https://api.moviebox.sumanonline.com/
     }
 
     suspend fun getTvChannels(category: String? = null): List<MediaItem> {
+        return fetchTvChannels(category).map { it.toMediaItem() }
+    }
+
+    suspend fun fetchTvChannels(category: String? = null): List<com.sumanonline.sumanmovies.data.models.TvChannel> {
         return try {
             val resp = api.getTvChannels(category)
             resp.data.map { ch ->
-                MediaItem(
-                    id = "tv:${ch.id}",
-                    title = ch.name,
-                    mediaType = MediaType.TV_CHANNEL,
-                    posterUrl = ch.logoUrl,
-                    overview = ch.groupTitle ?: "Live TV",
-                    provider = "tv"
+                com.sumanonline.sumanmovies.data.models.TvChannel(
+                    id = ch.id,
+                    name = ch.name,
+                    streamUrl = ch.streamUrl,
+                    logoUrl = ch.logoUrl,
+                    groupTitle = ch.groupTitle
                 )
             }
         } catch (_: Exception) {

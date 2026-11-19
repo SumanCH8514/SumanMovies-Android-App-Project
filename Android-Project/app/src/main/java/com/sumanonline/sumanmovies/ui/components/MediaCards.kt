@@ -272,9 +272,18 @@ fun ContinueWatchingCard(
                 .clip(RoundedCornerShape(12.dp))
                 .background(CardDark)
         ) {
-            if (!item.posterUrl.isNullOrBlank()) {
+            val displayImage = if (isSeries) {
+                item.stillUrl?.takeIf { it.isNotBlank() }
+                    ?: item.backdropUrl?.takeIf { it.isNotBlank() }
+                    ?: item.posterUrl
+            } else {
+                item.backdropUrl?.takeIf { it.isNotBlank() }
+                    ?: item.posterUrl
+            }
+
+            if (!displayImage.isNullOrBlank()) {
                 AsyncImage(
-                    model = item.posterUrl,
+                    model = displayImage,
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

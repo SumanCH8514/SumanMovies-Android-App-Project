@@ -18,6 +18,8 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.data.repository.MediaRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +37,7 @@ data class DetailsUiState(
     val seasons: List<Season> = emptyList(),
     val episodes: List<Episode> = emptyList(),
     val selectedServer: StreamingServer = StreamingServer.MOVIEBOX,
-    val serverStates: Map<StreamingServer, ServerState> = StreamingServer.values().associateWith {
+    val serverStates: Map<StreamingServer, ServerState> = StreamingServer.entries.associateWith {
         ServerState(server = it, status = ServerAvailability.CHECKING)
     },
     val availableStreams: List<StreamSource> = emptyList(),
@@ -49,7 +51,8 @@ data class DetailsUiState(
     val qualityModalMode: QualityModalMode = QualityModalMode.STREAM,
     val qualityModalServer: StreamingServer? = null,
     val isQualityModalLoading: Boolean = false,
-    val resolvingStreamUrl: String? = null
+    val resolvingStreamUrl: String? = null,
+    val isDirectPlaying: Boolean = false
 )
 
 class DetailsViewModel(
@@ -111,8 +114,93 @@ class DetailsViewModel(
             retryServer(server)
         }
 
-        if (openModalIfSupported && (server == StreamingServer.FOURKHDHUB || server == StreamingServer.HDHUB4U || server == StreamingServer.PLAY4U || server == StreamingServer.MOVIEBOX)) {
+        if (openModalIfSupported && (server == StreamingServer.FOURKHDHUB || server == StreamingServer.HDHUB4U || server == StreamingServer.MOVIEBOX)) {
             openQualityModal(server)
+        }
+    }
+
+    fun playDirectOrOpenModal(
+        context: Context,
+        onLaunchPlayer: (MediaItem, StreamSource, StreamingServer, List<StreamSource>, List<SubtitleTrack>) -> Unit
+    ) {
+        val currentServer = _uiState.value.selectedServer
+        if (currentServer == StreamingServer.PLAY4U || currentServer == StreamingServer.DRAMACHI) {
+            playDirect(context, currentServer, onLaunchPlayer)
+        } else {
+            openStreamModal(currentServer)
+        }
+    }
+
+    fun playDirect(
+        context: Context,
+        server: StreamingServer = _uiState.value.selectedServer,
+        onLaunchPlayer: (MediaItem, StreamSource, StreamingServer, List<StreamSource>, List<SubtitleTrack>) -> Unit
+    ) {
+        val d = _uiState.value.details ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDirectPlaying = true)
+            val currentState = _uiState.value.serverStates[server]
+            val isMovie = d.mediaType == MediaType.MOVIE
+            val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
+            val actualEpisode = if (isMovie) 0 else 1
+            val yr = d.year ?: d.releaseDate?.take(4)
+
+            val resolvedState = if (currentState != null && currentState.status == ServerAvailability.AVAILABLE && currentState.streams.isNotEmpty()) {
+                currentState
+            } else {
+                repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
+            }
+
+            _uiState.value = _uiState.value.copy(isDirectPlaying = false)
+
+            val stream = pickBestStream(resolvedState.streams)
+            if (stream != null) {
+                val displayTitle = if (isMovie) d.title else "${d.title} - S${actualSeason}E$actualEpisode"
+                val item = MediaItem(
+                    id = d.id,
+                    title = displayTitle,
+                    posterUrl = d.posterUrl,
+                    backdropUrl = d.backdropUrl,
+                    mediaType = d.mediaType
+                )
+
+                if (stream.isLockerUrl || repository.isLockerUrl(stream.url)) {
+                    _uiState.value = _uiState.value.copy(resolvingStreamUrl = stream.url)
+                    val resolved = repository.resolveLockerUrl(stream.url)
+                    _uiState.value = _uiState.value.copy(resolvingStreamUrl = null)
+                    val finalStream = if (resolved != null && resolved.url.isNotBlank()) {
+                        stream.copy(
+                            url = resolved.url,
+                            headers = resolved.headers,
+                            format = resolved.format,
+                            codec = resolved.codec,
+                            isLockerUrl = false
+                        )
+                    } else {
+                        stream
+                    }
+                    onLaunchPlayer(item, finalStream, server, resolvedState.streams, resolvedState.subtitles)
+                } else {
+                    onLaunchPlayer(item, stream, server, resolvedState.streams, resolvedState.subtitles)
+                }
+            } else {
+                val availableAlternatives = _uiState.value.serverStates.filter {
+                    it.key != server && it.value.status == ServerAvailability.AVAILABLE
+                }.keys.toList()
+
+                if (availableAlternatives.isNotEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        serverErrorMessage = "${server.displayName} is currently unavailable for this title. Try ${availableAlternatives.first().displayName}.",
+                        fallbackCandidates = availableAlternatives
+                    )
+                } else {
+                    Toast.makeText(
+                        context,
+                        "${server.displayName} is currently unavailable for this title.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
     }
 
@@ -234,6 +322,7 @@ class DetailsViewModel(
                         id = d.id,
                         title = displayTitle,
                         posterUrl = d.posterUrl,
+                        backdropUrl = d.backdropUrl,
                         mediaType = d.mediaType
                     )
                     onLaunchPlayer(item, finalStream, server)
@@ -249,6 +338,7 @@ class DetailsViewModel(
                 id = d.id,
                 title = displayTitle,
                 posterUrl = d.posterUrl,
+                backdropUrl = d.backdropUrl,
                 mediaType = d.mediaType
             )
             onLaunchPlayer(item, targetStream, server)
@@ -477,29 +567,82 @@ class DetailsViewModel(
             val eps = if (tmdbId != null) {
                 repository.getSeasonEpisodes(tmdbId, seasonNumber)
             } else {
-                emptyList()
+                val matchedSeason = _uiState.value.details?.seasons?.firstOrNull { it.seasonNumber == seasonNumber }
+                if (matchedSeason != null && matchedSeason.episodes.isNotEmpty()) {
+                    matchedSeason.episodes
+                } else if (matchedSeason != null && matchedSeason.episodeCount > 0) {
+                    (1..matchedSeason.episodeCount).map { epIdx ->
+                        Episode(
+                            id = "${mediaId}:s${seasonNumber}e${epIdx}",
+                            episodeNumber = epIdx,
+                            seasonNumber = seasonNumber,
+                            title = "Episode $epIdx"
+                        )
+                    }
+                } else {
+                    repository.getSeasonEpisodesForMedia(mediaId, seasonNumber)
+                }
             }
 
             _uiState.value = _uiState.value.copy(episodes = eps)
         }
     }
 
+    private var checkServersJob: Job? = null
+
     fun checkServersAvailability(title: String, season: Int = 1, episode: Int = 1) {
-        viewModelScope.launch {
+        checkServersJob?.cancel()
+        checkServersJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isStreamsLoading = true)
             val isMovie = _uiState.value.details?.mediaType == MediaType.MOVIE
             val actualSeason = if (isMovie) 0 else season
             val actualEpisode = if (isMovie) 0 else episode
             val yr = _uiState.value.details?.year ?: _uiState.value.details?.releaseDate?.take(4)
-            val serversMap = repository.resolveAllServers(title, actualSeason, actualEpisode, mediaId, yr)
-            val selected = _uiState.value.selectedServer
-            val activeStreams = serversMap[selected]?.streams ?: emptyList()
 
+            val currentServer = _uiState.value.selectedServer
+            val allServers = StreamingServer.entries
+
+            val initialStates = _uiState.value.serverStates.toMutableMap()
+            allServers.forEach { srv ->
+                val cached = repository.getCachedServerState(srv, title, actualSeason, actualEpisode, mediaId, yr)
+                if (cached != null) {
+                    initialStates[srv] = cached
+                } else if (initialStates[srv]?.status != ServerAvailability.AVAILABLE) {
+                    initialStates[srv] = ServerState(server = srv, status = ServerAvailability.CHECKING)
+                }
+            }
+
+            val cachedSelectedStreams = initialStates[currentServer]?.takeIf { it.status == ServerAvailability.AVAILABLE }?.streams
             _uiState.value = _uiState.value.copy(
-                serverStates = serversMap,
-                availableStreams = activeStreams,
-                isStreamsLoading = false
+                serverStates = initialStates,
+                availableStreams = cachedSelectedStreams ?: _uiState.value.availableStreams
             )
+
+            val serversToCheck = listOf(currentServer) + allServers.filter { it != currentServer }
+
+            serversToCheck.forEach { srv ->
+                val cached = initialStates[srv]
+                if (cached != null && cached.status == ServerAvailability.AVAILABLE) {
+                    return@forEach
+                }
+                launch(Dispatchers.IO) {
+                    val resolved = repository.resolveServer(srv, title, actualSeason, actualEpisode, mediaId, yr)
+                    val updated = _uiState.value.serverStates.toMutableMap()
+                    updated[srv] = resolved
+                    val isCurrent = (_uiState.value.selectedServer == srv)
+                    val newAvailable = if (isCurrent && resolved.status == ServerAvailability.AVAILABLE) {
+                        resolved.streams
+                    } else {
+                        _uiState.value.availableStreams
+                    }
+                    val stillChecking = updated.values.any { it.status == ServerAvailability.CHECKING }
+                    _uiState.value = _uiState.value.copy(
+                        serverStates = updated,
+                        availableStreams = newAvailable,
+                        isStreamsLoading = stillChecking
+                    )
+                }
+            }
         }
     }
 
@@ -528,6 +671,7 @@ class DetailsViewModel(
                 id = d.id,
                 title = d.title,
                 posterUrl = d.posterUrl,
+                backdropUrl = d.backdropUrl,
                 mediaType = d.mediaType
             )
             if (stream.isLockerUrl) {
@@ -586,6 +730,7 @@ class DetailsViewModel(
                     id = d.id,
                     title = "${d.title} - S${episode.seasonNumber}E${episode.episodeNumber}",
                     posterUrl = episode.stillUrl ?: d.posterUrl,
+                    backdropUrl = d.backdropUrl,
                     mediaType = d.mediaType
                 )
                 if (stream.isLockerUrl) {

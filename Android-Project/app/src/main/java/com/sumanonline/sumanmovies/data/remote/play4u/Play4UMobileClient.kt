@@ -306,7 +306,11 @@ class Play4UMobileClient {
         val sPad = if (season > 0) String.format(java.util.Locale.US, "%02d", season) else "01"
         val ePad = if (episode > 0) String.format(java.util.Locale.US, "%02d", episode) else "01"
 
-        val isSeries = season > 0 || episode > 0 || identifier.contains("/series/") || identifier.contains("series-")
+        val isSeries = if (season == 0 && episode == 0) {
+            identifier.contains("/series/") || identifier.contains("series-")
+        } else {
+            identifier.contains("/series/") || identifier.contains("series-") || (season > 0 && episode > 0)
+        }
 
         val targetUrlList = mutableListOf<String>()
 
@@ -323,6 +327,7 @@ class Play4UMobileClient {
                 targetUrlList.add("$primaryBaseUrl/$cleanId")
             } else {
                 targetUrlList.add("$primaryBaseUrl/watch/$cleanId")
+                targetUrlList.add("$primaryBaseUrl/movie/$cleanId")
             }
         }
 

@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -341,7 +342,7 @@ fun MovieBoxScreen(
                         .fillMaxSize()
                         .weight(1f)
                 ) {
-                    items(state.items, key = { it.id }) { item ->
+                    itemsIndexed(state.items, key = { index, item -> "${item.id}_$index" }) { _, item ->
                         VerticalPosterCard(
                             item = item,
                             onClick = { onMediaClick(item) },

@@ -595,6 +595,11 @@ class HDHub4uMobileClient {
 
 
         for ((lockerUrl, labelText) in targetLinks) {
+            val lowerLabel = labelText.lowercase().trim()
+            val lowerUrl = lockerUrl.lowercase().trim()
+            if (lowerLabel == "4k movies" || lowerUrl.contains("4khdhub.one") || (lowerLabel.contains("4k movies") && lowerUrl.contains("4khdhub"))) {
+                continue
+            }
 
             val quality = determineQualityFromLabel(labelText)
 
@@ -773,20 +778,17 @@ class HDHub4uMobileClient {
     private fun isEligibleLockerLink(href: String, text: String): Boolean {
 
         if (href.contains("facebook") || href.contains("telegram") || href.contains("twitter") ||
-
             href.contains("whatsapp") || href.contains("youtube") || href.contains("category/") ||
-
             href.contains("dmca") || href.contains("privacy-policy")) {
-
             return false
-
         }
 
+        val lowerHref = href.lowercase().trim()
+        val lowerText = text.lowercase().trim()
 
-
-        val lowerHref = href.lowercase()
-
-        val lowerText = text.lowercase()
+        if (lowerText == "4k movies" || lowerHref.contains("4khdhub.one") || (lowerHref.contains("4khdhub") && lowerText.contains("4k"))) {
+            return false
+        }
 
 
 

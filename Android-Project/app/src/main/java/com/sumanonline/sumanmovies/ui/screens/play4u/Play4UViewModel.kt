@@ -89,7 +89,7 @@ class Play4UViewModel(
     private suspend fun executeSearch(query: String) {
         _uiState.value = _uiState.value.copy(isSearching = true)
         try {
-            val results = repository.searchPlay4U(query)
+            val results = repository.searchPlay4U(query).distinctBy { it.id }
             _uiState.value = _uiState.value.copy(
                 items = results,
                 totalCount = results.size,
@@ -141,7 +141,7 @@ class Play4UViewModel(
                     lang = tab.lang,
                     page = page
                 )
-                val combined = if (append) _uiState.value.items + newItems else newItems
+                val combined = (if (append) _uiState.value.items + newItems else newItems).distinctBy { it.id }
                 _uiState.value = _uiState.value.copy(
                     items = combined,
                     totalCount = found,

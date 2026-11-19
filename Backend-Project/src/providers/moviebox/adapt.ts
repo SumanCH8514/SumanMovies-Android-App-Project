@@ -95,6 +95,7 @@ export function captionsJsonToOptions(payload: any): SubtitleOption[] {
 }
 
 export function movieboxSubjectToCatalogItem(s: any): CatalogItem | null {
+  if (s?.hasResource === false) return null;
   const idStr = s?.subjectId !== undefined ? String(s.subjectId) : s?.id !== undefined ? String(s.id) : null;
   if (!idStr) return null;
 

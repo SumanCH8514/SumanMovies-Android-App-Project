@@ -340,26 +340,46 @@ fun DetailsScreen(
                         Spacer(modifier = Modifier.height(18.dp))
 
                         Button(
-                            onClick = { viewModel.openStreamModal() },
+                            onClick = {
+                                viewModel.playDirectOrOpenModal(context) { item, stream, srv, allStreams, subs ->
+                                    onPlay(item, stream, srv, allStreams, subs)
+                                }
+                            },
+                            enabled = !state.isDirectPlaying,
                             shape = RoundedCornerShape(25.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = accent),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(50.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Play Now",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            if (state.isDirectPlaying) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Loading Stream...",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Play Now",
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(18.dp))
@@ -442,7 +462,15 @@ fun DetailsScreen(
                                     server = server,
                                     serverState = serverState,
                                     isSelected = isSelected,
-                                    onSelect = { viewModel.selectServer(server) },
+                                    onSelect = {
+                                        if ((server == StreamingServer.PLAY4U || server == StreamingServer.DRAMACHI) && isSelected) {
+                                            viewModel.playDirect(context, server) { item, stream, srv, allStreams, subs ->
+                                                onPlay(item, stream, srv, allStreams, subs)
+                                            }
+                                        } else {
+                                            viewModel.selectServer(server)
+                                        }
+                                    },
                                     onRetry = { viewModel.retryServer(server) }
                                 )
                             }
@@ -1302,12 +1330,20 @@ private fun QualitySelectionBottomSheet(
         listOf("2160p / 4K", "1080p", "720p", "480p", "Other")
     }
     val groupedStreams = remember(streams, server) {
-        streams.groupBy { stream ->
-            stream.getDisplayCategory(server)
-        }.toList().sortedBy { (cat, _) ->
-            val idx = categoryOrder.indexOf(cat)
-            if (idx >= 0) idx else 99
-        }
+        streams
+            .filterNot { s ->
+                val title = s.title?.trim() ?: ""
+                val url = s.url.trim().lowercase()
+                ((title.equals("4K Movies", ignoreCase = true) || title.equals("4K Movie", ignoreCase = true)) &&
+                    (url.contains("4khdhub") || s.provider.equals("hdhub4u", ignoreCase = true))) ||
+                    (url.contains("4khdhub.one") && (title.equals("4K Movies", ignoreCase = true) || url.trimEnd('/') == "https://4khdhub.one"))
+            }
+            .groupBy { stream ->
+                stream.getDisplayCategory(server)
+            }.toList().sortedBy { (cat, _) ->
+                val idx = categoryOrder.indexOf(cat)
+                if (idx >= 0) idx else 99
+            }
     }
 
     val expandedCategories = remember(groupedStreams) {
@@ -1983,14 +2019,28 @@ private fun DownloadFullScreenModal(
     }
 
     val groupedStreams = remember(streams) {
-        streams.groupBy { getQualityBucket(it) }
+        streams
+            .filterNot { s ->
+                val title = s.title?.trim() ?: ""
+                val url = s.url.trim().lowercase()
+                ((title.equals("4K Movies", ignoreCase = true) || title.equals("4K Movie", ignoreCase = true)) &&
+                    (url.contains("4khdhub") || s.provider.equals("hdhub4u", ignoreCase = true))) ||
+                    (url.contains("4khdhub.one") && (title.equals("4K Movies", ignoreCase = true) || url.trimEnd('/') == "https://4khdhub.one"))
+            }
+            .groupBy { getQualityBucket(it) }
     }
 
     val expandedCategories = remember(server, streams) {
         mutableStateMapOf<String, Boolean>().apply {
-            val firstAvailable = standardCategories.firstOrNull { groupedStreams.containsKey(it.id) }?.id
-            if (firstAvailable != null) {
-                put(firstAvailable, true)
+            val defaultCategory = when {
+                groupedStreams.containsKey("720p") && groupedStreams["720p"]?.isNotEmpty() == true -> "720p"
+                groupedStreams.containsKey("1080p") && groupedStreams["1080p"]?.isNotEmpty() == true -> "1080p"
+                else -> standardCategories.firstOrNull {
+                    groupedStreams.containsKey(it.id) && groupedStreams[it.id]?.isNotEmpty() == true
+                }?.id
+            }
+            if (defaultCategory != null) {
+                put(defaultCategory, true)
             }
         }
     }

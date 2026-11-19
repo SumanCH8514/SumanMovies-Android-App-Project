@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterListOff
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -87,57 +88,53 @@ fun CatalogScreen(
     modifier: Modifier = Modifier,
     onNavigateToPlay4U: (() -> Unit)? = null,
     onNavigateToMovieBox: (() -> Unit)? = null,
+    onNavigateToLiveTv: (() -> Unit)? = null,
     onGenreClick: ((String) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(BgDark)
     ) {
-        if (state.isSearching) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                SearchHeader(
-                    query = state.query,
-                    onQueryChange = { viewModel.onQueryChange(it) },
-                    onSearchTriggered = { viewModel.searchImmediately() },
-                    onClearSearch = { viewModel.clearSearch() },
-                    onFilterClick = { viewModel.openFilterSheet() },
-                    hasActiveFilters = state.hasActiveFilters,
-                    accent = accent
-                )
+        SearchHeader(
+            query = state.query,
+            onQueryChange = { viewModel.onQueryChange(it) },
+            onSearchTriggered = { viewModel.searchImmediately() },
+            onClearSearch = { viewModel.clearSearch() },
+            onFilterClick = { viewModel.openFilterSheet() },
+            hasActiveFilters = state.hasActiveFilters,
+            accent = accent,
+            contentPaddingHorizontal = 16.dp
+        )
+
+        ActiveFiltersRow(
+            state = state,
+            accent = accent,
+            onRemoveSort = { viewModel.setSortOption(SearchSortOption.RELEVANCE) },
+            onRemoveType = { viewModel.setTypeFilter(SearchTypeFilter.ALL) },
+            onRemoveYear = { viewModel.setSelectedYear(null) },
+            onRemoveGenre = { viewModel.setSelectedGenre(null) },
+            onClearAll = { viewModel.clearFilters() },
+            contentPaddingHorizontal = 16.dp
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            if (state.isSearching) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(color = accent)
                 }
-            }
-        } else if (state.query.isNotBlank()) {
-            if (state.searchResults.isEmpty()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    SearchHeader(
-                        query = state.query,
-                        onQueryChange = { viewModel.onQueryChange(it) },
-                        onSearchTriggered = { viewModel.searchImmediately() },
-                        onClearSearch = { viewModel.clearSearch() },
-                        onFilterClick = { viewModel.openFilterSheet() },
-                        hasActiveFilters = state.hasActiveFilters,
-                        accent = accent
-                    )
-
-                    ActiveFiltersRow(
-                        state = state,
-                        accent = accent,
-                        onRemoveSort = { viewModel.setSortOption(SearchSortOption.RELEVANCE) },
-                        onRemoveType = { viewModel.setTypeFilter(SearchTypeFilter.ALL) },
-                        onRemoveYear = { viewModel.setSelectedYear(null) },
-                        onRemoveGenre = { viewModel.setSelectedGenre(null) },
-                        onClearAll = { viewModel.clearFilters() }
-                    )
-
+            } else if (state.query.isNotBlank()) {
+                if (state.searchResults.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -207,39 +204,15 @@ fun CatalogScreen(
                             }
                         }
                     }
-                }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Column {
-                            SearchHeader(
-                                query = state.query,
-                                onQueryChange = { viewModel.onQueryChange(it) },
-                                onSearchTriggered = { viewModel.searchImmediately() },
-                                onClearSearch = { viewModel.clearSearch() },
-                                onFilterClick = { viewModel.openFilterSheet() },
-                                hasActiveFilters = state.hasActiveFilters,
-                                accent = accent,
-                                contentPaddingHorizontal = 0.dp
-                            )
-
-                            ActiveFiltersRow(
-                                state = state,
-                                accent = accent,
-                                onRemoveSort = { viewModel.setSortOption(SearchSortOption.RELEVANCE) },
-                                onRemoveType = { viewModel.setTypeFilter(SearchTypeFilter.ALL) },
-                                onRemoveYear = { viewModel.setSelectedYear(null) },
-                                onRemoveGenre = { viewModel.setSelectedGenre(null) },
-                                onClearAll = { viewModel.clearFilters() },
-                                contentPaddingHorizontal = 0.dp
-                            )
-
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -263,50 +236,22 @@ fun CatalogScreen(
                                 }
                             }
                         }
-                    }
 
-                    items(state.searchResults) { item ->
-                        VerticalPosterCard(
-                            item = item,
-                            onClick = { onMediaClick(item) },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 80.dp)
-            ) {
-                item {
-                    SearchHeader(
-                        query = state.query,
-                        onQueryChange = { viewModel.onQueryChange(it) },
-                        onClearSearch = { viewModel.clearSearch() },
-                        onFilterClick = { viewModel.openFilterSheet() },
-                        hasActiveFilters = state.hasActiveFilters,
-                        accent = accent,
-                        contentPaddingHorizontal = 16.dp
-                    )
-                }
-
-                if (state.hasActiveFilters) {
-                    item {
-                        ActiveFiltersRow(
-                            state = state,
-                            accent = accent,
-                            onRemoveSort = { viewModel.setSortOption(SearchSortOption.RELEVANCE) },
-                            onRemoveType = { viewModel.setTypeFilter(SearchTypeFilter.ALL) },
-                            onRemoveYear = { viewModel.setSelectedYear(null) },
-                            onRemoveGenre = { viewModel.setSelectedGenre(null) },
-                            onClearAll = { viewModel.clearFilters() },
-                            contentPaddingHorizontal = 16.dp
-                        )
+                        items(state.searchResults) { item ->
+                            VerticalPosterCard(
+                                item = item,
+                                onClick = { onMediaClick(item) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
-
-                if (state.searchHistory.isNotEmpty()) {
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 80.dp)
+                ) {
+                    if (state.searchHistory.isNotEmpty()) {
                     item {
                         CatalogSectionTitle(
                             title = "Recent Searches",
@@ -368,31 +313,46 @@ fun CatalogScreen(
                 item {
                     CatalogSectionTitle(title = "Streaming Providers")
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        ProviderHubCard(
-                            title = "Play4U",
-                            badge = "1080p HLS",
-                            description = "Lossless 1080p HLS streams with multi-audio",
-                            icon = Icons.Default.PlayArrow,
-                            accentColor = accent,
-                            onClick = { onNavigateToPlay4U?.invoke() },
-                            modifier = Modifier.weight(1f)
-                        )
+                        item {
+                            ProviderHubCard(
+                                title = "Play4U",
+                                badge = "1080p HLS",
+                                description = "Lossless 1080p HLS streams with multi-audio",
+                                icon = Icons.Default.PlayArrow,
+                                accentColor = accent,
+                                onClick = { onNavigateToPlay4U?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
 
-                        ProviderHubCard(
-                            title = "MovieBox",
-                            badge = "1080p DASH",
-                            description = "Direct DASH streams & multi-language catalog",
-                            icon = Icons.Default.Movie,
-                            accentColor = accent,
-                            onClick = { onNavigateToMovieBox?.invoke() },
-                            modifier = Modifier.weight(1f)
-                        )
+                        item {
+                            ProviderHubCard(
+                                title = "MovieBox",
+                                badge = "1080p DASH",
+                                description = "Direct DASH streams & multi-language catalog",
+                                icon = Icons.Default.Movie,
+                                accentColor = accent,
+                                onClick = { onNavigateToMovieBox?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "SumanMovies",
+                                badge = "Live TV",
+                                description = "500+ HD Live TV channels, sports, news & entertainment",
+                                icon = Icons.Default.LiveTv,
+                                accentColor = accent,
+                                onClick = { onNavigateToLiveTv?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(24.dp))
                 }
@@ -443,6 +403,7 @@ fun CatalogScreen(
                 }
             }
         }
+    }
     }
 
     if (state.isFilterSheetOpen) {

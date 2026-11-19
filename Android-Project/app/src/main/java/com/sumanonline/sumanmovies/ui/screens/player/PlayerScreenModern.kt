@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -498,7 +499,9 @@ fun MoviePlayerScreen(
             )
         }
 
-        if (playbackState.isBuffering) {
+        val isBusy = playbackState.isBuffering || uiState.isLoadingStreams || uiState.resolvingStreamUrl != null
+
+        if (isBusy) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -605,23 +608,25 @@ fun MoviePlayerScreen(
 
                 }
 
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.35f))
-                        .clickable {
-                            viewModel.playerManager.togglePlayPause()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(52.dp)
-                    )
+                if (!isBusy) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(68.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable {
+                                viewModel.playerManager.togglePlayPause()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(52.dp)
+                        )
+                    }
                 }
 
                 Column(
@@ -723,12 +728,37 @@ fun MoviePlayerScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+
+                            val providerName = uiState.serverDisplayName?.takeIf { it.isNotBlank() }
+                                ?: uiState.currentStream?.provider?.let { p ->
+                                    StreamingServer.entries.firstOrNull { it.id.equals(p, ignoreCase = true) }?.displayName
+                                        ?: p.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                                }
+                                ?: uiState.selectedServer.displayName
+
+                            PlayerProviderBadge(
+                                providerName = providerName,
+                                onClick = { viewModel.toggleStreamsDrawer() },
+                                modifier = Modifier.padding(start = 2.dp)
+                            )
                         }
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
+                            IconButton(
+                                onClick = { viewModel.downloadCurrentPlayingStream(context) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = "Download",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+
                             IconButton(
                                 onClick = onEnterPip,
                                 modifier = Modifier.size(32.dp)
@@ -802,13 +832,15 @@ fun MoviePlayerScreen(
                                 )
                             }
 
-                            val subLangCode = if (!uiState.isSubtitlesEnabled || uiState.selectedSubtitleTrack == null) {
+                            val isSubActive = uiState.isSubtitlesEnabled && uiState.selectedSubtitleTrack != null
+                            val subLangCode = if (!isSubActive) {
                                 "OFF"
                             } else {
                                 uiState.selectedSubtitleTrack?.language?.uppercase()?.take(3)
                                     ?: uiState.selectedSubtitleTrack?.displayName?.take(3)?.uppercase()
                                     ?: "ENG"
                             }
+                            val subColor = if (isSubActive) goldenAccent else Color.White
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -821,14 +853,14 @@ fun MoviePlayerScreen(
                                 Icon(
                                     imageVector = Icons.Default.ClosedCaption,
                                     contentDescription = "Subtitles",
-                                    tint = goldenAccent,
+                                    tint = subColor,
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Text(
                                     text = subLangCode,
-                                    color = goldenAccent,
+                                    color = subColor,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = if (isSubActive) FontWeight.Bold else FontWeight.Medium
                                 )
                             }
 
@@ -1032,7 +1064,9 @@ fun SeriesPlayerScreen(
             )
         }
 
-        if (playbackState.isBuffering) {
+        val isBusy = playbackState.isBuffering || uiState.isLoadingStreams || uiState.resolvingStreamUrl != null
+
+        if (isBusy) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -1158,23 +1192,25 @@ fun SeriesPlayerScreen(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.35f))
-                        .clickable {
-                            viewModel.playerManager.togglePlayPause()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(52.dp)
-                    )
+                if (!isBusy) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(68.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable {
+                                viewModel.playerManager.togglePlayPause()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(52.dp)
+                        )
+                    }
                 }
 
                 Column(
@@ -1334,12 +1370,37 @@ fun SeriesPlayerScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+
+                            val providerName = uiState.serverDisplayName?.takeIf { it.isNotBlank() }
+                                ?: uiState.currentStream?.provider?.let { p ->
+                                    StreamingServer.entries.firstOrNull { it.id.equals(p, ignoreCase = true) }?.displayName
+                                        ?: p.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                                }
+                                ?: uiState.selectedServer.displayName
+
+                            PlayerProviderBadge(
+                                providerName = providerName,
+                                onClick = { viewModel.toggleStreamsDrawer() },
+                                modifier = Modifier.padding(start = 2.dp)
+                            )
                         }
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
+                            IconButton(
+                                onClick = { viewModel.downloadCurrentPlayingStream(context) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = "Download",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+
                             IconButton(
                                 onClick = onEnterPip,
                                 modifier = Modifier.size(32.dp)
@@ -1435,13 +1496,15 @@ fun SeriesPlayerScreen(
                                 )
                             }
 
-                            val subLangCode = if (!uiState.isSubtitlesEnabled || uiState.selectedSubtitleTrack == null) {
+                            val isSubActive = uiState.isSubtitlesEnabled && uiState.selectedSubtitleTrack != null
+                            val subLangCode = if (!isSubActive) {
                                 "OFF"
                             } else {
                                 uiState.selectedSubtitleTrack?.language?.uppercase()?.take(3)
                                     ?: uiState.selectedSubtitleTrack?.displayName?.take(3)?.uppercase()
                                     ?: "ENG"
                             }
+                            val subColor = if (isSubActive) goldenAccent else Color.White
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1454,14 +1517,14 @@ fun SeriesPlayerScreen(
                                 Icon(
                                     imageVector = Icons.Default.ClosedCaption,
                                     contentDescription = "Subtitles",
-                                    tint = goldenAccent,
+                                    tint = subColor,
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Text(
                                     text = subLangCode,
-                                    color = goldenAccent,
+                                    color = subColor,
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = if (isSubActive) FontWeight.Bold else FontWeight.Medium
                                 )
                             }
 
@@ -2160,6 +2223,12 @@ private fun DrawersAndDialogs(
     }
 
     if (uiState.isStreamsDrawerOpen) {
+        val currentServer = uiState.drawerSelectedServer
+        val streamsForCurrentServer = uiState.serverStreamsMap[currentServer] ?: (if (uiState.selectedServer == currentServer) uiState.availableStreams else emptyList())
+        val isCurrentServerLoading = uiState.loadingServers.contains(currentServer)
+        val availableQualities = remember(streamsForCurrentServer) { getAvailableQualitiesForServer(streamsForCurrentServer) }
+        val activeQuality = uiState.drawerSelectedQuality?.takeIf { availableQualities.contains(it) } ?: availableQualities.firstOrNull() ?: "1080p"
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2169,10 +2238,10 @@ private fun DrawersAndDialogs(
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(340.dp)
+                    .width(480.dp)
                     .align(Alignment.CenterEnd)
                     .background(darkDrawerBg)
-                    .border(BorderStroke(1.dp, Color(0xFF1E222D)), RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
+                    .border(BorderStroke(1.dp, Color(0xFF1E222D)), RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -2185,12 +2254,22 @@ private fun DrawersAndDialogs(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Quality & Servers",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Quality & Servers",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "• Select Server & Resolutions",
+                                color = Color(0xFF9CA3AF),
+                                fontSize = 11.5.sp
+                            )
+                        }
                         IconButton(
                             onClick = { viewModel.toggleStreamsDrawer() },
                             modifier = Modifier.size(32.dp)
@@ -2204,7 +2283,7 @@ private fun DrawersAndDialogs(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
                         text = "ACTIVE SERVER",
@@ -2213,97 +2292,321 @@ private fun DrawersAndDialogs(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(5.dp))
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         StreamingServer.entries.forEach { server ->
-                            val isCurrent = (uiState.selectedServer == server)
+                            val isViewed = (uiState.drawerSelectedServer == server)
+                            val isPlaying = (uiState.selectedServer == server && uiState.currentStream != null)
+                            val isLoading = uiState.loadingServers.contains(server)
+
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isCurrent) goldenAccent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f))
+                                    .background(if (isViewed) goldenAccent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f))
                                     .border(
                                         BorderStroke(
                                             1.dp,
-                                            if (isCurrent) goldenAccent else Color.White.copy(alpha = 0.1f)
+                                            if (isViewed) goldenAccent else Color.White.copy(alpha = 0.1f)
                                         ),
                                         RoundedCornerShape(8.dp)
                                     )
-                                    .clickable { viewModel.switchServerInPlayer(server) }
-                                    .padding(vertical = 8.dp),
+                                    .clickable { viewModel.selectDrawerServer(server) }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = server.displayName,
-                                    color = if (isCurrent) Color.White else Color(0xFF9CA3AF),
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (isPlaying) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isViewed) goldenAccent else Color(0xFF22C55E))
+                                        )
+                                    }
+                                    Text(
+                                        text = server.displayName,
+                                        color = if (isViewed) Color.White else Color(0xFF9CA3AF),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = if (isViewed) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                    if (isLoading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(10.dp),
+                                            color = goldenAccent,
+                                            strokeWidth = 1.5.dp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1E222D)))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(
-                        text = "AVAILABLE QUALITIES",
-                        color = Color(0xFF9CA3AF),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
                     ) {
-                        items(uiState.availableStreams) { stream ->
-                            val isSelected = uiState.currentStream?.url == stream.url
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) goldenAccent.copy(alpha = 0.15f) else Color(0xFF141720))
-                                    .border(
-                                        BorderStroke(
-                                            1.dp,
-                                            if (isSelected) goldenAccent else Color.White.copy(alpha = 0.08f)
-                                        ),
-                                        RoundedCornerShape(8.dp)
-                                    )
-                                    .clickable {
-                                        viewModel.switchStream(stream)
+                        Column(
+                            modifier = Modifier
+                                .width(125.dp)
+                                .fillMaxHeight()
+                        ) {
+                            Text(
+                                text = "QUALITIES",
+                                color = Color(0xFF9CA3AF),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (isCurrentServerLoading && streamsForCurrentServer.isEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    repeat(3) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(34.dp)
+                                                .clip(RoundedCornerShape(7.dp))
+                                                .background(Color.White.copy(alpha = 0.04f))
+                                        )
                                     }
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
+                                }
+                            } else if (availableQualities.isEmpty()) {
+                                Text(
+                                    text = "No qualities",
+                                    color = Color(0xFF6B7280),
+                                    fontSize = 11.sp
+                                )
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(availableQualities) { quality ->
+                                        val isQualitySelected = (activeQuality == quality)
+                                        val linkCount = streamsForCurrentServer.count { normalizeQualityBucket(it) == quality }
+                                        val badgeColor = when (quality) {
+                                            "4K" -> Color(0xFFEAB308)
+                                            "1080p" -> Color(0xFF3B82F6)
+                                            "720p" -> Color(0xFF14B8A6)
+                                            "480p", "360p" -> Color(0xFF8B5CF6)
+                                            else -> Color(0xFF9CA3AF)
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(7.dp))
+                                                .background(
+                                                    if (isQualitySelected) goldenAccent.copy(alpha = 0.18f)
+                                                    else Color(0xFF141720)
+                                                )
+                                                .border(
+                                                    BorderStroke(
+                                                        1.dp,
+                                                        if (isQualitySelected) goldenAccent
+                                                        else Color.White.copy(alpha = 0.08f)
+                                                    ),
+                                                    RoundedCornerShape(7.dp)
+                                                )
+                                                .clickable { viewModel.selectDrawerQuality(quality) }
+                                                .padding(horizontal = 9.dp, vertical = 7.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = quality,
+                                                        color = if (isQualitySelected) goldenAccent else Color.White,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (isQualitySelected) FontWeight.Bold else FontWeight.Medium
+                                                    )
+                                                    Text(
+                                                        text = "[$linkCount ${if (linkCount == 1) "link" else "links"}]",
+                                                        color = if (isQualitySelected) goldenAccent.copy(alpha = 0.85f) else Color(0xFF9CA3AF),
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(badgeColor)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Box(modifier = Modifier.fillMaxHeight().width(1.dp).background(Color(0xFF1E222D)))
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        ) {
+                            if (isCurrentServerLoading && streamsForCurrentServer.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = goldenAccent,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Text(
+                                            text = "Loading ${currentServer.displayName} streams...",
+                                            color = Color(0xFF9CA3AF),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            } else if (streamsForCurrentServer.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
                                     Text(
-                                        text = stream.getDisplayTitle(),
-                                        color = if (isSelected) goldenAccent else Color.White,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = "${stream.getDisplayCategory()} · ${stream.format}",
+                                        text = "No streams found on ${currentServer.displayName}",
                                         color = Color(0xFF9CA3AF),
-                                        fontSize = 10.5.sp
+                                        fontSize = 11.5.sp,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
+                            } else {
+                                val streamsForQuality = streamsForCurrentServer.filter { normalizeQualityBucket(it) == activeQuality }
+                                Text(
+                                    text = "AVAILABLE LINKS (${streamsForQuality.size})",
+                                    color = Color(0xFF9CA3AF),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = goldenAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                                if (streamsForQuality.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "No $activeQuality links found",
+                                            color = Color(0xFF6B7280),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(streamsForQuality) { stream ->
+                                            val isSelected = uiState.currentStream?.url == stream.url
+                                            val rawTitle = stream.getDisplayTitle(currentServer)
+                                            val fmt = stream.format.uppercase().trim()
+                                            val formattedTitle = if (rawTitle.startsWith(fmt, ignoreCase = true)) {
+                                                rawTitle
+                                            } else {
+                                                "$fmt $rawTitle"
+                                            }
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(if (isSelected) goldenAccent.copy(alpha = 0.15f) else Color(0xFF141720))
+                                                    .border(
+                                                        BorderStroke(
+                                                            1.dp,
+                                                            if (isSelected) goldenAccent else Color.White.copy(alpha = 0.08f)
+                                                        ),
+                                                        RoundedCornerShape(8.dp)
+                                                    )
+                                                    .clickable {
+                                                        viewModel.selectStreamFromDrawer(stream)
+                                                    }
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                                    Text(
+                                                        text = formattedTitle,
+                                                        color = if (isSelected) goldenAccent else Color.White,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (!stream.audioLangs.isNullOrBlank()) {
+                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                        Text(
+                                                            text = stream.audioLangs,
+                                                            color = Color(0xFF9CA3AF),
+                                                            fontSize = 9.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+
+                                                if (isSelected) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "PLAYING",
+                                                            color = goldenAccent,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        Icon(
+                                                            imageVector = Icons.Default.Check,
+                                                            contentDescription = "Playing",
+                                                            tint = goldenAccent,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                    }
+                                                } else {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Switch",
+                                                        tint = Color(0xFF9CA3AF),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2546,5 +2849,42 @@ private fun formatModernTime(ms: Long, showHours: Boolean = false): String {
         String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
+    }
+}
+
+@Composable
+private fun PlayerProviderBadge(
+    providerName: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (providerName.isBlank()) return
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .border(
+                BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                RoundedCornerShape(6.dp)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(5.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF10B981))
+        )
+        Text(
+            text = providerName,
+            color = Color.White,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.3.sp
+        )
     }
 }

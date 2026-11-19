@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {
+      "pattern": "api.streaming.sumanonline.com",
+      "custom_domain": true
+    },
+    {
       "pattern": "api.moviebox.sumanonline.com",
       "custom_domain": true
     }

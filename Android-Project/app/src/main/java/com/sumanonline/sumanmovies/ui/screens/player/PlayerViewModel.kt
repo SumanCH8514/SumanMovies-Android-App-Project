@@ -9,11 +9,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.Episode
+import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,12 +26,35 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+fun normalizeQualityBucket(stream: StreamSource): String {
+    val q = "${stream.quality} ${stream.category} ${stream.title ?: ""} ${stream.label}".lowercase()
+    return when {
+        q.contains("2160") || q.contains("4k") || q.contains("uhd") -> "4K"
+        q.contains("1080") || q.contains("fhd") || q.contains("full hd") -> "1080p"
+        q.contains("720") || q.contains("hd") -> "720p"
+        q.contains("480") || q.contains("sd") -> "480p"
+        q.contains("360") -> "360p"
+        else -> "Auto"
+    }
+}
+
+fun getAvailableQualitiesForServer(streams: List<StreamSource>): List<String> {
+    if (streams.isEmpty()) return emptyList()
+    val present = streams.map { normalizeQualityBucket(it) }.toSet()
+    val standardOrder = listOf("4K", "1080p", "720p", "480p", "360p", "Auto")
+    val sorted = standardOrder.filter { present.contains(it) }
+    val extra = present.filter { !standardOrder.contains(it) }
+    return sorted + extra
+}
+
 data class PlayerUiState(
     val mediaTitle: String = "",
     val mediaId: String = "",
     val mediaType: MediaType = MediaType.MOVIE,
     val releaseYear: String? = null,
     val posterUrl: String? = null,
+    val backdropUrl: String? = null,
+    val episodeStillUrl: String? = null,
     val episodeTitle: String? = null,
     val serverName: String? = null,
     val serverDisplayName: String? = null,
@@ -43,6 +70,10 @@ data class PlayerUiState(
     val pendingFallbackStream: StreamSource? = null,
     val resolvingStreamUrl: String? = null,
     val isLoadingStreams: Boolean = false,
+    val drawerSelectedServer: StreamingServer = StreamingServer.MOVIEBOX,
+    val drawerSelectedQuality: String? = null,
+    val serverStreamsMap: Map<StreamingServer, List<StreamSource>> = emptyMap(),
+    val loadingServers: Set<StreamingServer> = emptySet(),
     val availableAudioTracks: List<PlayerAudioTrack> = emptyList(),
     val selectedAudioTrack: PlayerAudioTrack? = null,
     val isAudioTracksModalOpen: Boolean = false,
@@ -69,6 +100,60 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private val _serverSubtitles = MutableStateFlow<List<SubtitleTrack>>(emptyList())
+    private val _serverStreamsCache = ConcurrentHashMap<StreamingServer, List<StreamSource>>()
+    private val _serverSubtitlesCache = ConcurrentHashMap<StreamingServer, List<SubtitleTrack>>()
+    private var prefetchJob: Job? = null
+
+    private fun prefetchOtherServers(
+        title: String,
+        seasonNum: Int,
+        epNum: Int,
+        mediaId: String,
+        releaseYear: String?,
+        currentServer: StreamingServer
+    ) {
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            val targets = StreamingServer.entries.filter { it != currentServer }
+            targets.forEach { srv ->
+                launch(Dispatchers.IO) {
+                    if (_serverStreamsCache.containsKey(srv)) return@launch
+                    try {
+                        val resolved = repository.resolveServer(srv, title, seasonNum, epNum, mediaId, releaseYear)
+                        if (resolved.streams.isNotEmpty()) {
+                            _serverStreamsCache[srv] = resolved.streams
+                            if (resolved.subtitles.isNotEmpty()) {
+                                _serverSubtitlesCache[srv] = resolved.subtitles
+                            }
+                            synchronized(_serverStreamsCache) {
+                                val cur = _uiState.value.serverStreamsMap.toMutableMap()
+                                cur[srv] = resolved.streams
+                                val loading = _uiState.value.loadingServers - srv
+                                val activeDrawerServer = _uiState.value.drawerSelectedServer
+                                val autoQuality = if (activeDrawerServer == srv && _uiState.value.drawerSelectedQuality == null) {
+                                    val qList = getAvailableQualitiesForServer(resolved.streams)
+                                    qList.firstOrNull { it == "1080p" } ?: qList.firstOrNull()
+                                } else {
+                                    _uiState.value.drawerSelectedQuality
+                                }
+                                _uiState.value = _uiState.value.copy(
+                                    serverStreamsMap = cur,
+                                    loadingServers = loading,
+                                    drawerSelectedQuality = autoQuality
+                                )
+                            }
+                        } else {
+                            val loading = _uiState.value.loadingServers - srv
+                            _uiState.value = _uiState.value.copy(loadingServers = loading)
+                        }
+                    } catch (_: Exception) {
+                        val loading = _uiState.value.loadingServers - srv
+                        _uiState.value = _uiState.value.copy(loadingServers = loading)
+                    }
+                }
+            }
+        }
+    }
 
     init {
         startPositionLoop()
@@ -104,13 +189,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var hasUserSelectedAudio = false
+    private var hasAttemptedInitialAudio = false
+    private var hasUserSelectedSubtitle = false
+    private var hasAttemptedInitialSubtitle = false
+
     private fun observeAudioTracks() {
         viewModelScope.launch {
             playerManager.audioTracks.collectLatest { tracks ->
                 val preferredAudio = app.preferencesManager.preferredAudioLanguage.value
                 val selected = tracks.firstOrNull { it.isSelected }
 
-                if (tracks.isNotEmpty() && preferredAudio.isNotBlank() && !preferredAudio.equals("None", ignoreCase = true)) {
+                if (!hasUserSelectedAudio && !hasAttemptedInitialAudio && tracks.isNotEmpty() && preferredAudio.isNotBlank() && !preferredAudio.equals("None", ignoreCase = true)) {
                     val matchingTrack = tracks.firstOrNull { t ->
                         t.isSupported && (
                             t.displayName.contains(preferredAudio, ignoreCase = true) ||
@@ -119,7 +209,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                     if (matchingTrack != null && !matchingTrack.isSelected && (selected == null || !selected.displayName.contains(preferredAudio, ignoreCase = true))) {
+                        hasAttemptedInitialAudio = true
                         playerManager.selectAudioTrack(matchingTrack)
+                    } else if (matchingTrack != null) {
+                        hasAttemptedInitialAudio = true
                     }
                 }
 
@@ -138,7 +231,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val preferredSub = app.preferencesManager.preferredSubtitleLanguage.value
                 val subtitlesByDefault = app.preferencesManager.subtitlesByDefault.value
 
-                if (tracks.isNotEmpty() && subtitlesByDefault && preferredSub.isNotBlank() && !preferredSub.equals("None", ignoreCase = true)) {
+                if (!hasUserSelectedSubtitle && !hasAttemptedInitialSubtitle && tracks.isNotEmpty() && subtitlesByDefault && preferredSub.isNotBlank() && !preferredSub.equals("None", ignoreCase = true)) {
                     val currentSelected = tracks.firstOrNull { it.isSelected }
                     val matchingTrack = tracks.firstOrNull { t ->
                         t.displayName.contains(preferredSub, ignoreCase = true) ||
@@ -146,9 +239,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         matchesLanguageCode(preferredSub, t.language)
                     }
                     if (matchingTrack != null && !matchingTrack.isSelected && (currentSelected == null || !currentSelected.displayName.contains(preferredSub, ignoreCase = true))) {
+                        hasAttemptedInitialSubtitle = true
                         playerManager.selectSubtitleTrack(matchingTrack)
+                    } else if (matchingTrack != null) {
+                        hasAttemptedInitialSubtitle = true
                     }
-                } else if (!subtitlesByDefault && tracks.any { it.isSelected }) {
+                } else if (!hasUserSelectedSubtitle && !hasAttemptedInitialSubtitle && !subtitlesByDefault && tracks.any { it.isSelected }) {
+                    hasAttemptedInitialSubtitle = true
                     playerManager.disableSubtitles()
                 }
 
@@ -189,23 +286,111 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     lastHandledError = error
                     lastHandledStreamKey = streamKey
 
-                    val failed = _uiState.value.failedStreamUrls.toMutableSet()
-                    failed.add(streamKey)
-
-                    val nextStream = _uiState.value.availableStreams.firstOrNull { candidate ->
-                        val candidateKey = "${candidate.url}#${candidate.quality}#${candidate.format}"
-                        !failed.contains(candidateKey)
-                    }
-
-                    _uiState.value = _uiState.value.copy(
-                        failedStreamUrls = failed,
-                        playbackErrorMessage = error,
-                        pendingFallbackStream = nextStream
-                    )
+                    triggerAutoFallback(current, error)
                 } else if (error == null) {
                     lastHandledError = null
                     lastHandledStreamKey = null
                 }
+            }
+        }
+    }
+
+    private fun triggerAutoFallback(failedStream: StreamSource, reason: String) {
+        val s = _uiState.value
+        val streamKey = "${failedStream.url}#${failedStream.quality}#${failedStream.format}"
+        val failed = s.failedStreamUrls.toMutableSet()
+        failed.add(streamKey)
+        failed.add(failedStream.url)
+
+        val server = s.selectedServer
+        val serverStreams = s.serverStreamsMap[server] ?: s.availableStreams
+        val currentBucket = normalizeQualityBucket(failedStream)
+
+        val sameQualityCandidate = serverStreams.firstOrNull { candidate ->
+            val key = "${candidate.url}#${candidate.quality}#${candidate.format}"
+            !failed.contains(key) && !failed.contains(candidate.url) && normalizeQualityBucket(candidate) == currentBucket
+        }
+
+        val fallbackOrder = when (currentBucket) {
+            "4K" -> listOf("1080p", "720p", "480p", "360p", "Auto")
+            "1080p" -> listOf("720p", "480p", "360p", "4K", "Auto")
+            "720p" -> listOf("480p", "360p", "1080p", "4K", "Auto")
+            "480p" -> listOf("360p", "720p", "1080p", "4K", "Auto")
+            else -> listOf("1080p", "720p", "480p", "360p", "Auto")
+        }
+
+        var nextStream: StreamSource? = sameQualityCandidate
+        var nextQualityBucket: String? = currentBucket
+
+        if (nextStream == null) {
+            for (bucket in fallbackOrder) {
+                val candidate = serverStreams.firstOrNull { c ->
+                    val key = "${c.url}#${c.quality}#${c.format}"
+                    !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == bucket
+                }
+                if (candidate != null) {
+                    nextStream = candidate
+                    nextQualityBucket = bucket
+                    break
+                }
+            }
+        }
+
+        if (nextStream != null) {
+            val currentPos = playerManager.playbackState.value.currentPositionMs
+            _uiState.value = s.copy(
+                failedStreamUrls = failed,
+                drawerSelectedQuality = nextQualityBucket,
+                playbackErrorMessage = null,
+                pendingFallbackStream = null
+            )
+            playerManager.clearError()
+            switchStream(nextStream, currentPos)
+        } else {
+            val otherServers = StreamingServer.entries.filter { it != server }
+            var altServerStream: Pair<StreamingServer, StreamSource>? = null
+            for (altSrv in otherServers) {
+                val altStreams = s.serverStreamsMap[altSrv]
+                if (!altStreams.isNullOrEmpty()) {
+                    val candidate = altStreams.firstOrNull { c ->
+                        val key = "${c.url}#${c.quality}#${c.format}"
+                        !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == "1080p"
+                    } ?: altStreams.firstOrNull { c ->
+                        val key = "${c.url}#${c.quality}#${c.format}"
+                        !failed.contains(key) && !failed.contains(c.url)
+                    }
+                    if (candidate != null) {
+                        altServerStream = altSrv to candidate
+                        break
+                    }
+                }
+            }
+
+            if (altServerStream != null) {
+                val (altSrv, candidate) = altServerStream
+                val currentPos = playerManager.playbackState.value.currentPositionMs
+                val serverSubs = _serverSubtitlesCache[altSrv] ?: _serverSubtitles.value
+                _serverSubtitles.value = serverSubs
+                val streamsForServer = s.serverStreamsMap[altSrv] ?: listOf(candidate)
+                _uiState.value = s.copy(
+                    failedStreamUrls = failed,
+                    selectedServer = altSrv,
+                    serverName = altSrv.name,
+                    serverDisplayName = altSrv.displayName,
+                    drawerSelectedServer = altSrv,
+                    drawerSelectedQuality = normalizeQualityBucket(candidate),
+                    availableStreams = streamsForServer,
+                    playbackErrorMessage = null,
+                    pendingFallbackStream = null
+                )
+                playerManager.clearError()
+                switchStream(candidate, currentPos)
+            } else {
+                _uiState.value = s.copy(
+                    failedStreamUrls = failed,
+                    playbackErrorMessage = reason,
+                    pendingFallbackStream = null
+                )
             }
         }
     }
@@ -218,6 +403,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (current.durationMs > 0 && current.currentPositionMs > 0) {
                     val s = _uiState.value
                     if (s.mediaId.isNotBlank()) {
+                        val curEp = s.currentSeasonEpisodes.firstOrNull {
+                            it.seasonNumber == s.seasonNumber && it.episodeNumber == s.episodeNumber
+                        }
+                        val still = curEp?.stillUrl ?: s.episodeStillUrl
                         repository.saveWatchProgress(
                             mediaId = s.mediaId,
                             title = s.mediaTitle,
@@ -226,7 +415,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             season = s.seasonNumber,
                             episode = s.episodeNumber,
                             positionMs = current.currentPositionMs,
-                            durationMs = current.durationMs
+                            durationMs = current.durationMs,
+                            backdropUrl = s.backdropUrl,
+                            stillUrl = still
                         )
                     }
                 }
@@ -240,6 +431,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         title: String,
         mediaType: MediaType,
         posterUrl: String?,
+        backdropUrl: String? = null,
         releaseYear: String? = null,
         initialStreamUrl: String?,
         initialFormat: String?,
@@ -255,6 +447,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         episodeNumber: Int = 1,
         initialEpisodeTitle: String? = null
     ) {
+        hasUserSelectedAudio = false
+        hasAttemptedInitialAudio = false
+        hasUserSelectedSubtitle = false
+        hasAttemptedInitialSubtitle = false
         _serverSubtitles.value = initialSubtitles
         val serverEnum = try {
             if (serverName != null) StreamingServer.valueOf(serverName)
@@ -279,6 +475,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             mediaType = mediaType,
             releaseYear = releaseYear,
             posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
             episodeTitle = initialEpisodeTitle,
             serverName = serverEnum.name,
             serverDisplayName = resolvedServerDisplay,
@@ -289,14 +486,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         if (mediaType == MediaType.SERIES) {
             loadSeriesMetadata(mediaId, title, seasonNumber, episodeNumber, initialEpisodeTitle)
-        } else if (releaseYear.isNullOrBlank()) {
+        } else if (mediaType != MediaType.TV_CHANNEL) {
             viewModelScope.launch {
                 try {
                     val details = repository.getDetails(mediaId, mediaType)
                     val yr = details?.year ?: details?.releaseDate?.take(4)
-                    if (!yr.isNullOrBlank()) {
-                        _uiState.value = _uiState.value.copy(releaseYear = yr)
-                    }
+                    val bd = details?.backdropUrl
+                    _uiState.value = _uiState.value.copy(
+                        releaseYear = if (releaseYear.isNullOrBlank() && !yr.isNullOrBlank()) yr else _uiState.value.releaseYear,
+                        backdropUrl = if (_uiState.value.backdropUrl.isNullOrBlank() && !bd.isNullOrBlank()) bd else _uiState.value.backdropUrl
+                    )
                 } catch (_: Exception) {}
             }
         }
@@ -338,9 +537,31 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 mergedInitial.firstOrNull()
             }
 
+            val initialMap = if (mergedInitial.isNotEmpty()) {
+                mapOf(serverEnum to mergedInitial)
+            } else {
+                emptyMap()
+            }
+            _serverStreamsCache.clear()
+            _serverSubtitlesCache.clear()
+            if (mergedInitial.isNotEmpty()) {
+                _serverStreamsCache[serverEnum] = mergedInitial
+            }
+            if (initialSubtitles.isNotEmpty()) {
+                _serverSubtitlesCache[serverEnum] = initialSubtitles
+            }
+
+            val initialQualities = getAvailableQualitiesForServer(mergedInitial)
+            val initialQualityBucket = defaultStream?.let { normalizeQualityBucket(it) }
+                ?: initialQualities.firstOrNull { it == "1080p" }
+                ?: initialQualities.firstOrNull()
+
             _uiState.value = _uiState.value.copy(
                 availableStreams = mergedInitial,
-                currentStream = defaultStream
+                currentStream = defaultStream,
+                drawerSelectedServer = serverEnum,
+                drawerSelectedQuality = initialQualityBucket,
+                serverStreamsMap = initialMap
             )
 
             val episodeHistoryId = if (isSeries) "$mediaId:s${seasonNumber}e${episodeNumber}" else "$mediaId:s1e1"
@@ -386,12 +607,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
+            val actualSeason = if (isSeries) seasonNumber.coerceAtLeast(1) else 0
+            val actualEpisode = if (isSeries) episodeNumber.coerceAtLeast(1) else 0
+
             _uiState.value = _uiState.value.copy(isLoadingStreams = true)
             val resolvedState = repository.resolveServer(
                 serverEnum,
                 cleanBase,
-                seasonNumber,
-                episodeNumber,
+                actualSeason,
+                actualEpisode,
                 mediaId,
                 _uiState.value.releaseYear ?: releaseYear
             )
@@ -403,14 +627,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             if (resolvedState.subtitles.isNotEmpty()) {
                 _serverSubtitles.value = resolvedState.subtitles
+                _serverSubtitlesCache[serverEnum] = resolvedState.subtitles
                 val cur = _uiState.value.currentStream
                 if (cur != null) {
                     val pos = playerManager.playbackState.value.currentPositionMs
                     playerManager.prepareStream(cur, resolvedState.subtitles, pos)
                 }
             }
+            _serverStreamsCache[serverEnum] = currentList
+            val curMap = _uiState.value.serverStreamsMap.toMutableMap()
+            curMap[serverEnum] = currentList
+            val updatedQualities = getAvailableQualitiesForServer(currentList)
+            val autoQ = _uiState.value.drawerSelectedQuality ?: (updatedQualities.firstOrNull { it == "1080p" } ?: updatedQualities.firstOrNull())
+
             _uiState.value = _uiState.value.copy(
                 availableStreams = currentList,
+                serverStreamsMap = curMap,
+                drawerSelectedServer = serverEnum,
+                drawerSelectedQuality = autoQ,
                 isLoadingStreams = false
             )
             if (_uiState.value.currentStream == null && currentList.isNotEmpty()) {
@@ -418,6 +652,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value = _uiState.value.copy(currentStream = first)
                 playerManager.prepareStream(first, _serverSubtitles.value, resumePositionMs)
             }
+            prefetchOtherServers(
+                title = cleanBase,
+                seasonNum = actualSeason,
+                epNum = actualEpisode,
+                mediaId = mediaId,
+                releaseYear = _uiState.value.releaseYear ?: releaseYear,
+                currentServer = serverEnum
+            )
         }
     }
 
@@ -435,6 +677,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (!yr.isNullOrBlank()) {
                     _uiState.value = _uiState.value.copy(releaseYear = yr)
                 }
+                if (!details?.backdropUrl.isNullOrBlank()) {
+                    _uiState.value = _uiState.value.copy(backdropUrl = details?.backdropUrl)
+                }
                 val loadedSeasons = details?.seasons?.filter { it.seasonNumber > 0 }?.ifEmpty { null }
                     ?: listOf(
                         Season(1, "Season 1", 8),
@@ -446,7 +691,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     selectedDrawerSeason = seasonNum,
                     episodeTitle = initialEpTitle
                 )
-                loadDrawerSeasonEpisodes(seasonNum, epNum)
+                loadDrawerSeasonEpisodes(seasonNum, epNum, details?.tmdbId)
             } catch (_: Exception) {
                 val defaultSeasons = listOf(
                     Season(1, "Season 1", 8),
@@ -463,14 +708,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun loadDrawerSeasonEpisodes(seasonNum: Int, currentEpNum: Int? = null) {
+    fun loadDrawerSeasonEpisodes(seasonNum: Int, currentEpNum: Int? = null, tmdbIdOverride: Int? = null) {
         viewModelScope.launch {
             try {
-                val tmdbId = _uiState.value.mediaId.toIntOrNull()
+                val cachedItem = repository.getCachedItem(_uiState.value.mediaId)
+                val tmdbId = tmdbIdOverride ?: _uiState.value.mediaId.toIntOrNull() ?: cachedItem?.tmdbId
                 val episodes = if (tmdbId != null) {
                     repository.getSeasonEpisodes(tmdbId, seasonNum)
                 } else {
-                    emptyList()
+                    repository.getSeasonEpisodesForMedia(_uiState.value.mediaId, seasonNum)
                 }
                 val finalEpisodes = episodes.ifEmpty {
                     val sampleTitles = listOf(
@@ -501,7 +747,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 val targetEp = currentEpNum ?: _uiState.value.episodeNumber
-                val epTitle = finalEpisodes.firstOrNull { it.episodeNumber == targetEp }?.title
+                val epObj = finalEpisodes.firstOrNull { it.episodeNumber == targetEp }
+                val epTitle = epObj?.title
+                val epStill = epObj?.stillUrl
                 val maxEp = finalEpisodes.maxOfOrNull { it.episodeNumber } ?: finalEpisodes.size
                 val hasNext = targetEp < maxEp || _uiState.value.seasonsList.any { it.seasonNumber > seasonNum }
                 val hasPrev = targetEp > 1 || seasonNum > 1
@@ -510,6 +758,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     currentSeasonEpisodes = finalEpisodes,
                     selectedDrawerSeason = seasonNum,
                     episodeTitle = epTitle ?: _uiState.value.episodeTitle,
+                    episodeStillUrl = epStill ?: _uiState.value.episodeStillUrl,
                     hasNextEpisode = hasNext,
                     hasPreviousEpisode = hasPrev
                 )
@@ -518,6 +767,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playEpisode(seasonNum: Int, epNum: Int) {
+        hasUserSelectedAudio = false
+        hasAttemptedInitialAudio = false
+        hasUserSelectedSubtitle = false
+        hasAttemptedInitialSubtitle = false
         val cleanBase = _uiState.value.mediaTitle
             .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
             .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
@@ -526,16 +779,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .ifBlank { _uiState.value.mediaTitle }
         val updatedTitle = "$cleanBase - S${seasonNum}E${epNum}"
 
-        val epTitle = _uiState.value.currentSeasonEpisodes.firstOrNull { it.episodeNumber == epNum && it.seasonNumber == seasonNum }?.title
+        val matchedEp = _uiState.value.currentSeasonEpisodes.firstOrNull { it.episodeNumber == epNum && it.seasonNumber == seasonNum }
+        val epTitle = matchedEp?.title
+        val epStill = matchedEp?.stillUrl
         _uiState.value = _uiState.value.copy(
             mediaTitle = updatedTitle,
             seasonNumber = seasonNum,
             episodeNumber = epNum,
             episodeTitle = epTitle,
+            episodeStillUrl = epStill,
             isEpisodesDrawerOpen = false,
             isLoadingStreams = true
         )
         viewModelScope.launch {
+            _serverStreamsCache.clear()
+            _serverSubtitlesCache.clear()
             val resolvedState = repository.resolveServer(
                 _uiState.value.selectedServer,
                 cleanBase,
@@ -544,8 +802,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value.mediaId,
                 _uiState.value.releaseYear
             )
+            _serverStreamsCache[_uiState.value.selectedServer] = resolvedState.streams
+            if (resolvedState.subtitles.isNotEmpty()) {
+                _serverSubtitles.value = resolvedState.subtitles
+                _serverSubtitlesCache[_uiState.value.selectedServer] = resolvedState.subtitles
+            }
+            val curMap = mapOf(_uiState.value.selectedServer to resolvedState.streams)
+            val qList = getAvailableQualitiesForServer(resolvedState.streams)
+            val defaultQ = qList.firstOrNull { it == "1080p" } ?: qList.firstOrNull()
+
             _uiState.value = _uiState.value.copy(
                 availableStreams = resolvedState.streams,
+                serverStreamsMap = curMap,
+                drawerSelectedServer = _uiState.value.selectedServer,
+                drawerSelectedQuality = defaultQ,
                 isLoadingStreams = false
             )
             val first = resolvedState.streams.firstOrNull()
@@ -559,6 +829,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 switchStream(first, resumePos)
             }
+            prefetchOtherServers(
+                title = cleanBase,
+                seasonNum = seasonNum,
+                epNum = epNum,
+                mediaId = _uiState.value.mediaId,
+                releaseYear = _uiState.value.releaseYear,
+                currentServer = _uiState.value.selectedServer
+            )
         }
         loadDrawerSeasonEpisodes(seasonNum, epNum)
     }
@@ -613,36 +891,90 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun switchServerInPlayer(server: StreamingServer) {
+    fun selectDrawerServer(server: StreamingServer) {
         val s = _uiState.value
-        _uiState.value = s.copy(
-            selectedServer = server,
-            serverName = server.name,
-            serverDisplayName = server.displayName,
-            isLoadingStreams = true
-        )
-        viewModelScope.launch {
-            val isSeries = s.mediaType == MediaType.SERIES || s.mediaType == MediaType.ANIME || s.mediaType == MediaType.DRAMA
-            val targetTitle = if (isSeries) {
-                s.mediaTitle
-                    .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-                    .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-                    .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
-                    .trim()
-                    .ifBlank { s.mediaTitle }
-            } else {
-                s.mediaTitle
-            }
-            val resolvedState = repository.resolveServer(server, targetTitle, s.seasonNumber, s.episodeNumber, s.mediaId, s.releaseYear)
-            _uiState.value = _uiState.value.copy(
-                availableStreams = resolvedState.streams,
-                isLoadingStreams = false
+        if (s.drawerSelectedServer == server && s.serverStreamsMap.containsKey(server)) return
+
+        val cached = _serverStreamsCache[server]
+        if (cached != null && cached.isNotEmpty()) {
+            val qualities = getAvailableQualitiesForServer(cached)
+            val defaultQuality = qualities.firstOrNull { it == "1080p" } ?: qualities.firstOrNull()
+            _uiState.value = s.copy(
+                drawerSelectedServer = server,
+                drawerSelectedQuality = defaultQuality
             )
-            val first = resolvedState.streams.firstOrNull()
-            if (first != null) {
-                switchStream(first)
+        } else {
+            _uiState.value = s.copy(
+                drawerSelectedServer = server,
+                drawerSelectedQuality = null,
+                loadingServers = s.loadingServers + server
+            )
+            viewModelScope.launch(Dispatchers.IO) {
+                val isSeries = s.mediaType == MediaType.SERIES || s.mediaType == MediaType.ANIME || s.mediaType == MediaType.DRAMA
+                val cleanTitle = if (isSeries) {
+                    s.mediaTitle
+                        .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                        .trim()
+                        .ifBlank { s.mediaTitle }
+                } else {
+                    s.mediaTitle
+                }
+                val actualSeason = if (isSeries) s.seasonNumber.coerceAtLeast(1) else 0
+                val actualEpisode = if (isSeries) s.episodeNumber.coerceAtLeast(1) else 0
+                try {
+                    val resolvedState = repository.resolveServer(
+                        server,
+                        cleanTitle,
+                        actualSeason,
+                        actualEpisode,
+                        s.mediaId,
+                        s.releaseYear
+                    )
+                    _serverStreamsCache[server] = resolvedState.streams
+                    if (resolvedState.subtitles.isNotEmpty()) {
+                        _serverSubtitlesCache[server] = resolvedState.subtitles
+                    }
+                    val cur = _uiState.value.serverStreamsMap.toMutableMap()
+                    cur[server] = resolvedState.streams
+                    val loading = _uiState.value.loadingServers - server
+                    val qualities = getAvailableQualitiesForServer(resolvedState.streams)
+                    val defaultQuality = qualities.firstOrNull { it == "1080p" } ?: qualities.firstOrNull()
+                    _uiState.value = _uiState.value.copy(
+                        serverStreamsMap = cur,
+                        loadingServers = loading,
+                        drawerSelectedQuality = if (_uiState.value.drawerSelectedServer == server) defaultQuality else _uiState.value.drawerSelectedQuality
+                    )
+                } catch (_: Exception) {
+                    val loading = _uiState.value.loadingServers - server
+                    _uiState.value = _uiState.value.copy(loadingServers = loading)
+                }
             }
         }
+    }
+
+    fun selectDrawerQuality(quality: String) {
+        _uiState.value = _uiState.value.copy(drawerSelectedQuality = quality)
+    }
+
+    fun selectStreamFromDrawer(stream: StreamSource) {
+        val s = _uiState.value
+        val targetServer = s.drawerSelectedServer
+        val serverSubs = _serverSubtitlesCache[targetServer] ?: _serverSubtitles.value
+        _serverSubtitles.value = serverSubs
+        val streamsForServer = s.serverStreamsMap[targetServer] ?: listOf(stream)
+        _uiState.value = s.copy(
+            selectedServer = targetServer,
+            serverName = targetServer.name,
+            serverDisplayName = targetServer.displayName,
+            availableStreams = streamsForServer
+        )
+        switchStream(stream)
+    }
+
+    fun switchServerInPlayer(server: StreamingServer) {
+        selectDrawerServer(server)
     }
 
     fun confirmFallback() {
@@ -694,7 +1026,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         isLockerUrl = false
                     )
                 } else {
-                    stream
+                    null
+                }
+                if (finalStream == null) {
+                    triggerAutoFallback(stream, "Direct playback link unavailable")
+                    return@launch
                 }
                 val updated = _uiState.value.availableStreams.map {
                     if (it.url == stream.url) finalStream else it
@@ -723,6 +1059,77 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun downloadCurrentPlayingStream(context: Context) {
+        val s = _uiState.value
+        val curStream = s.currentStream
+        if (curStream == null) {
+            Toast.makeText(context, "No stream active to download", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val isSeries = s.mediaType == MediaType.SERIES || s.mediaType == MediaType.ANIME || s.mediaType == MediaType.DRAMA
+                val cleanTitle = if (isSeries) {
+                    s.mediaTitle
+                        .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                        .trim()
+                        .ifBlank { s.mediaTitle }
+                } else {
+                    s.mediaTitle
+                }
+
+                val mediaItem = MediaItem(
+                    id = s.mediaId,
+                    title = cleanTitle,
+                    posterUrl = s.posterUrl,
+                    backdropUrl = s.posterUrl,
+                    overview = "",
+                    year = s.releaseYear,
+                    mediaType = s.mediaType
+                )
+
+                val ep = if (isSeries) {
+                    Episode(
+                        id = "${s.mediaId}-${s.seasonNumber}-${s.episodeNumber}",
+                        episodeNumber = s.episodeNumber,
+                        seasonNumber = s.seasonNumber,
+                        title = s.episodeTitle ?: "Episode ${s.episodeNumber}",
+                        overview = "",
+                        stillUrl = s.posterUrl,
+                        durationMinutes = 0,
+                        airDate = ""
+                    )
+                } else null
+
+                val streamToDownload = if (curStream.isLockerUrl) {
+                    val resolved = repository.resolveLockerUrl(curStream.url)
+                    if (resolved != null && resolved.url.isNotBlank()) {
+                        curStream.copy(
+                            url = resolved.url,
+                            headers = resolved.headers,
+                            format = resolved.format,
+                            codec = resolved.codec,
+                            isLockerUrl = false
+                        )
+                    } else curStream
+                } else curStream
+
+                val downloadId = repository.startDownload(mediaItem, streamToDownload, ep)
+                if (downloadId > 0) {
+                    val epText = if (ep != null) " (S${ep.seasonNumber}E${ep.episodeNumber})" else ""
+                    Toast.makeText(context, "Downloading $cleanTitle$epText in ${streamToDownload.quality}", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Download failed to start", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Download error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     fun toggleControls() {
         _uiState.value = _uiState.value.copy(showControls = !_uiState.value.showControls)
     }
@@ -732,12 +1139,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleStreamsDrawer() {
-        _uiState.value = _uiState.value.copy(
-            isStreamsDrawerOpen = !_uiState.value.isStreamsDrawerOpen,
-            isAudioTracksModalOpen = false,
-            isSubtitlesModalOpen = false,
-            isEpisodesDrawerOpen = false
-        )
+        val opening = !_uiState.value.isStreamsDrawerOpen
+        if (opening) {
+            val curServer = _uiState.value.selectedServer
+            val curStreams = _uiState.value.serverStreamsMap[curServer] ?: _uiState.value.availableStreams
+            val qualities = getAvailableQualitiesForServer(curStreams)
+            val selectedQ = _uiState.value.currentStream?.let { normalizeQualityBucket(it) }
+                ?: qualities.firstOrNull { it == "1080p" }
+                ?: qualities.firstOrNull()
+            _uiState.value = _uiState.value.copy(
+                isStreamsDrawerOpen = true,
+                drawerSelectedServer = curServer,
+                drawerSelectedQuality = selectedQ,
+                isAudioTracksModalOpen = false,
+                isSubtitlesModalOpen = false,
+                isEpisodesDrawerOpen = false
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(isStreamsDrawerOpen = false)
+        }
     }
 
     fun toggleAudioTracksModal() {
@@ -765,6 +1185,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectAudioTrack(track: PlayerAudioTrack) {
+        hasUserSelectedAudio = true
         playerManager.selectAudioTrack(track)
         _uiState.value = _uiState.value.copy(
             selectedAudioTrack = track,
@@ -773,6 +1194,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectSubtitleTrack(track: PlayerSubtitleTrack) {
+        hasUserSelectedSubtitle = true
         playerManager.selectSubtitleTrack(track)
         _uiState.value = _uiState.value.copy(
             selectedSubtitleTrack = track,
@@ -782,6 +1204,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disableSubtitles() {
+        hasUserSelectedSubtitle = true
         playerManager.disableSubtitles()
         _uiState.value = _uiState.value.copy(
             selectedSubtitleTrack = null,

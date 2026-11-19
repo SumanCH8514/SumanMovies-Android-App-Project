@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { MovieBoxClient } from "../providers/moviebox/client";
 import { FourKHdHubClient } from "../providers/fourkhdhub/client";
 import { DramachiClient } from "../providers/dramachi/client";
+import { Play4UClient } from "../providers/play4u/client";
+import { ReAnimeClient } from "../providers/reanime/client";
 
 export const mediaRouter = new Hono();
 
@@ -14,6 +16,20 @@ mediaRouter.get("/:provider/:id", async (c) => {
   }
 
   try {
+    if (provider === "reanime") {
+      const client = new ReAnimeClient();
+      const details = /^\d+$/.test(id)
+        ? await client.getDetailsByAnilist(parseInt(id, 10))
+        : await client.getDetails(id);
+      return c.json({ data: details });
+    }
+
+    if (provider === "play4u") {
+      const client = new Play4UClient();
+      const details = await client.getDetails(id);
+      return c.json({ data: details });
+    }
+
     if (provider === "moviebox") {
       const client = new MovieBoxClient();
       const details = await client.getDetails(id);

@@ -17,6 +17,10 @@ import com.sumanonline.sumanmovies.data.local.entities.DownloadEntity
 import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.StreamSource
+import com.sumanonline.sumanmovies.data.download.hls.HlsPlaylistParser
+import com.sumanonline.sumanmovies.data.download.hls.HlsSegmentDownloader
+import com.sumanonline.sumanmovies.data.download.hls.HlsVariant
+import com.sumanonline.sumanmovies.data.download.remux.MediaRemuxer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +46,9 @@ data class DownloadProgress(
     val totalBytes: Long,
     val speedBytesPerSec: Long = 0L,
     val status: String = "DOWNLOADING",
-    val failureReason: String? = null
+    val failureReason: String? = null,
+    val downloadedSegments: Int = 0,
+    val totalSegments: Int = 0
 )
 
 class AppDownloadManager(
@@ -195,17 +201,117 @@ class AppDownloadManager(
     fun getCompletedDownloadsCountFlow(): Flow<Int> = downloadDao.getCompletedDownloadsCount()
     fun getTotalDownloadsCountFlow(): Flow<Int> = downloadDao.getTotalDownloadsCount()
 
-    private fun getStorageDir(): File {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir, "SumanMovies")
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+    private fun sanitizeTitle(rawTitle: String): String {
+        return rawTitle
+            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""\s*\(\s*(19\d\d|20\d\d)\s*\)"""), "")
+            .replace(":", " -")
+            .replace(Regex("""[\\/*?"<>|]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .ifBlank { "Untitled" }
     }
 
-    private fun buildCleanFileName(title: String, season: Int?, episode: Int?, quality: String, ext: String): String {
-        val cleanTitle = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(60)
-        val epPart = if (season != null && episode != null) "_S${season}E${episode}" else ""
-        val cleanQuality = quality.replace(Regex("[^a-zA-Z0-9]"), "")
-        return "${cleanTitle}${epPart}_${cleanQuality}$ext"
+    private fun extractYear(title: String, itemYear: String?): String? {
+        if (!itemYear.isNullOrBlank()) {
+            val cleanY = itemYear.trim()
+            if (cleanY.length == 4 && cleanY.toIntOrNull() != null) {
+                return cleanY
+            }
+        }
+        val match = Regex("""\b(19\d\d|20\d\d)\b""").find(title)
+        return match?.value
+    }
+
+    private fun sanitizeQuality(rawQuality: String): String {
+        val clean = rawQuality
+            .replace(Regex("""[\\/*?"<>|:]"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+        val standardMatch = Regex("""(?i)\b(4k|2160p|1080p|720p|480p|360p)\b""").find(clean)
+        return when {
+            standardMatch != null -> standardMatch.value
+            clean.isNotBlank() -> clean
+            else -> "1080p"
+        }
+    }
+
+    fun getMediaDownloadDir(
+        mediaType: String,
+        rawTitle: String,
+        year: String?
+    ): File {
+        val cleanTitle = sanitizeTitle(rawTitle)
+        val resolvedYear = extractYear(rawTitle, year)
+        val isSeries = mediaType.equals("SERIES", ignoreCase = true) ||
+                mediaType.equals("ANIME", ignoreCase = true) ||
+                mediaType.equals("DRAMA", ignoreCase = true) ||
+                mediaType.equals("SHOW", ignoreCase = true) ||
+                mediaType.equals("TV", ignoreCase = true)
+
+        val typeFolder = if (isSeries) "Series" else "Movies"
+        val mediaFolder = if (!resolvedYear.isNullOrBlank()) "$cleanTitle ($resolvedYear)" else cleanTitle
+
+        val publicDownloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val primaryDir = File(publicDownloadDir, "SumanOnline Web Services/SumanMovies/$typeFolder/$mediaFolder")
+
+        val canUsePrimary = try {
+            if (!primaryDir.exists()) {
+                primaryDir.mkdirs()
+            }
+            primaryDir.exists() && primaryDir.canWrite()
+        } catch (_: Exception) {
+            false
+        }
+
+        if (canUsePrimary) {
+            return primaryDir
+        }
+
+        val fallbackBase = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+            ?: context.filesDir
+        val fallbackDir = File(fallbackBase, "SumanOnline Web Services/SumanMovies/$typeFolder/$mediaFolder")
+        if (!fallbackDir.exists()) {
+            fallbackDir.mkdirs()
+        }
+        return fallbackDir
+    }
+
+    fun buildFormattedFileName(
+        rawTitle: String,
+        mediaType: String,
+        season: Int?,
+        episode: Int?,
+        rawQuality: String,
+        rawYear: String?,
+        ext: String
+    ): String {
+        val cleanTitle = sanitizeTitle(rawTitle)
+        val resolvedYear = extractYear(rawTitle, rawYear)
+        val cleanQuality = sanitizeQuality(rawQuality)
+        val cleanExt = if (ext.startsWith(".")) ext else ".$ext"
+
+        val isSeries = mediaType.equals("SERIES", ignoreCase = true) ||
+                mediaType.equals("ANIME", ignoreCase = true) ||
+                mediaType.equals("DRAMA", ignoreCase = true) ||
+                mediaType.equals("SHOW", ignoreCase = true) ||
+                mediaType.equals("TV", ignoreCase = true) ||
+                (season != null && episode != null)
+
+        val yearPart = if (!resolvedYear.isNullOrBlank()) " ($resolvedYear)" else ""
+
+        return if (isSeries) {
+            val sNum = season ?: 1
+            val eNum = episode ?: 1
+            val epCode = String.format(java.util.Locale.US, "S%02dE%02d", sNum, eNum)
+            "$cleanTitle $epCode$yearPart $cleanQuality - SumanMovies$cleanExt"
+        } else {
+            "$cleanTitle$yearPart $cleanQuality - SumanMovies$cleanExt"
+        }
     }
 
     suspend fun enqueueDownload(
@@ -213,11 +319,33 @@ class AppDownloadManager(
         stream: StreamSource,
         episode: Episode? = null
     ): Long = withContext(Dispatchers.IO) {
-        val ext = if (stream.format.equals("MKV", ignoreCase = true) || stream.url.contains(".mkv")) ".mkv" else ".mp4"
-        val fileName = buildCleanFileName(item.title, episode?.seasonNumber, episode?.episodeNumber, stream.quality, ext)
+        val ext = if (stream.format.equals("MKV", ignoreCase = true) || stream.url.contains(".mkv", ignoreCase = true)) ".mkv" else ".mp4"
+        val seasonNum = episode?.seasonNumber
+        val episodeNum = episode?.episodeNumber
+        val mediaTypeStr = if (episode != null) "SERIES" else item.mediaType.name
+
+        val targetDir = getMediaDownloadDir(mediaTypeStr, item.title, item.year)
+        val fileName = buildFormattedFileName(
+            rawTitle = item.title,
+            mediaType = mediaTypeStr,
+            season = seasonNum,
+            episode = episodeNum,
+            rawQuality = stream.quality,
+            rawYear = item.year,
+            ext = ext
+        )
         val entityId = if (episode != null) "${item.id}-S${episode.seasonNumber}E${episode.episodeNumber}" else item.id
 
-        val targetFile = File(getStorageDir(), fileName)
+        val targetFile = File(targetDir, fileName)
+
+        val enrichedHeaders = stream.headers.toMutableMap()
+        if (stream.format.isNotBlank()) {
+            enrichedHeaders["__stream_format"] = stream.format
+        }
+        if (stream.provider.isNotBlank()) {
+            enrichedHeaders["__stream_provider"] = stream.provider
+        }
+
         val downloadEntity = DownloadEntity(
             id = entityId,
             downloadId = System.currentTimeMillis(),
@@ -235,10 +363,24 @@ class AppDownloadManager(
             episodeNumber = episode?.episodeNumber ?: 1,
             createdAt = System.currentTimeMillis(),
             failureReason = null,
-            headersJson = serializeHeaders(stream.headers)
+            headersJson = serializeHeaders(enrichedHeaders)
         )
 
         downloadDao.insert(downloadEntity)
+
+        val initialProgress = DownloadProgress(
+            id = entityId,
+            downloadedBytes = 0L,
+            totalBytes = stream.sizeBytes ?: 0L,
+            speedBytesPerSec = 0L,
+            status = "DOWNLOADING",
+            failureReason = null
+        )
+        val pMap = _progressFlow.value.toMutableMap()
+        pMap[entityId] = initialProgress
+        _progressFlow.value = pMap
+
+        DownloadForegroundService.startService(context)
 
         activeJobs[entityId]?.cancel()
         val job = downloadScope.launch {
@@ -266,8 +408,27 @@ class AppDownloadManager(
         val entity = downloadDao.getById(id) ?: return@withContext
         downloadDao.updateFailureStatusById(id, "DOWNLOADING", null)
 
-        val targetFile = File(entity.localFilePath ?: File(getStorageDir(), "${entity.id}.mp4").absolutePath)
+        val targetFile = if (!entity.localFilePath.isNullOrBlank()) {
+            File(entity.localFilePath)
+        } else {
+            val dir = getMediaDownloadDir(entity.mediaType, entity.title, null)
+            File(dir, "${entity.id}.mp4")
+        }
         val headers = deserializeHeaders(entity.headersJson)
+
+        val initialProgress = DownloadProgress(
+            id = id,
+            downloadedBytes = entity.downloadedBytes,
+            totalBytes = entity.fileSizeBytes,
+            speedBytesPerSec = 0L,
+            status = "DOWNLOADING",
+            failureReason = null
+        )
+        val pMap = _progressFlow.value.toMutableMap()
+        pMap[id] = initialProgress
+        _progressFlow.value = pMap
+
+        DownloadForegroundService.startService(context)
 
         activeJobs[id]?.cancel()
         val job = downloadScope.launch {
@@ -286,6 +447,14 @@ class AppDownloadManager(
             val tempFile = targetFile?.let { File("${it.absolutePath}.part") }
             try { tempFile?.delete() } catch (_: Exception) {}
             try { targetFile?.delete() } catch (_: Exception) {}
+
+            val parent = targetFile?.parentFile
+            if (parent != null && parent.isDirectory && parent.listFiles()?.isEmpty() == true) {
+                try { parent.delete() } catch (_: Exception) {}
+            }
+
+            val hlsTemp = File(context.filesDir, "hls_temp/$id")
+            try { hlsTemp.deleteRecursively() } catch (_: Exception) {}
 
             systemDownloadManager?.remove(entity.downloadId)
             downloadDao.deleteById(id)
@@ -306,6 +475,21 @@ class AppDownloadManager(
         }
     }
 
+    private fun isFileM3u8OrHtml(file: File): Boolean {
+        if (!file.exists() || file.length() == 0L || file.length() > 500_000L) return false
+        return try {
+            file.bufferedReader().use { reader ->
+                val line = reader.readLine()?.trim() ?: ""
+                line.startsWith("#EXTM3U") ||
+                        line.startsWith("<!DOCTYPE", ignoreCase = true) ||
+                        line.startsWith("<html", ignoreCase = true) ||
+                        line.startsWith("<?xml", ignoreCase = true)
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private suspend fun runDownloadLoop(
         entity: DownloadEntity,
         targetFile: File,
@@ -314,18 +498,27 @@ class AppDownloadManager(
         val tempFile = File("${targetFile.absolutePath}.part")
         var existingBytes = if (tempFile.exists()) tempFile.length() else 0L
 
-        if (targetFile.exists() && targetFile.length() > 0 && (entity.fileSizeBytes <= 0L || targetFile.length() >= entity.fileSizeBytes)) {
-            downloadDao.updateProgressById(
-                entity.id,
-                "COMPLETED",
-                targetFile.length(),
-                targetFile.length(),
-                targetFile.absolutePath
-            )
-            val updated = _progressFlow.value.toMutableMap()
-            updated[entity.id] = DownloadProgress(entity.id, targetFile.length(), targetFile.length(), 0L, "COMPLETED")
-            _progressFlow.value = updated
-            return@withContext
+        val isTinyFile = targetFile.exists() && targetFile.length() < 1_000_000L
+        val isM3u8OrHtml = targetFile.exists() && isFileM3u8OrHtml(targetFile)
+
+        if (targetFile.exists() && !isTinyFile && !isM3u8OrHtml) {
+            val isExpectedSize = entity.fileSizeBytes > 0L && targetFile.length() >= (entity.fileSizeBytes * 0.9)
+            val isLargeFallback = entity.fileSizeBytes <= 0L && targetFile.length() >= 5_000_000L
+            if (isExpectedSize || isLargeFallback) {
+                downloadDao.updateProgressById(
+                    entity.id,
+                    "COMPLETED",
+                    targetFile.length(),
+                    targetFile.length(),
+                    targetFile.absolutePath
+                )
+                val updated = _progressFlow.value.toMutableMap()
+                updated[entity.id] = DownloadProgress(entity.id, targetFile.length(), targetFile.length(), 0L, "COMPLETED")
+                _progressFlow.value = updated
+                return@withContext
+            }
+        } else if (isTinyFile || isM3u8OrHtml) {
+            try { targetFile.delete() } catch (_: Exception) {}
         }
 
         val freeSpace = targetFile.parentFile?.freeSpace ?: targetFile.freeSpace
@@ -343,8 +536,18 @@ class AppDownloadManager(
         try {
             var currentUrl = entity.streamUrl
             var currentHeaders = headers.toMutableMap()
+            val formatMeta = currentHeaders["__stream_format"] ?: ""
 
-            // If it's a DASH manifest (.mpd), resolve direct progressive media BaseURL if present in the manifest
+            val isPreHls = formatMeta.equals("HLS", ignoreCase = true) ||
+                    HlsPlaylistParser.isHlsUrl(currentUrl) ||
+                    currentUrl.contains(".m3u8", ignoreCase = true) ||
+                    entity.quality.contains("HLS", ignoreCase = true)
+
+            if (isPreHls) {
+                runHlsDownload(entity, targetFile, currentUrl, currentHeaders)
+                return@withContext
+            }
+
             if (currentUrl.endsWith(".mpd", ignoreCase = true) || currentUrl.contains("/dash/")) {
                 val directMedia = resolveDirectMediaUrlFromManifest(currentUrl, currentHeaders, entity.quality)
                 if (directMedia != null) {
@@ -353,30 +556,8 @@ class AppDownloadManager(
                 }
             }
 
-            fun buildRequest(url: String, hdrs: Map<String, String>, rangeBytes: Long): Request {
-                val reqBuilder = Request.Builder().url(url)
-                if (rangeBytes > 0) {
-                    reqBuilder.header("Range", "bytes=$rangeBytes-")
-                }
-                val ua = hdrs["User-Agent"]
-                    ?: hdrs["user-agent"]
-                    ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
-                reqBuilder.header("User-Agent", ua)
-
-                hdrs.forEach { (k, v) ->
-                    if (!k.equals("Host", ignoreCase = true) &&
-                        !k.equals("Range", ignoreCase = true) &&
-                        !k.equals("User-Agent", ignoreCase = true)
-                    ) {
-                        reqBuilder.header(k, v)
-                    }
-                }
-                return reqBuilder.build()
-            }
-
             var resp = httpClient.newCall(buildRequest(currentUrl, currentHeaders, existingBytes)).execute()
 
-            // If CloudFront cookie or link expired (401, 403, 404, 410), attempt automatic stream refresh
             if (!resp.isSuccessful && (resp.code == 401 || resp.code == 403 || resp.code == 404 || resp.code == 410)) {
                 resp.close()
                 val refreshed = refreshStreamSource(entity)
@@ -384,6 +565,9 @@ class AppDownloadManager(
                     currentUrl = refreshed.url
                     currentHeaders.clear()
                     currentHeaders.putAll(refreshed.headers)
+                    if (refreshed.format.isNotBlank()) {
+                        currentHeaders["__stream_format"] = refreshed.format
+                    }
                     val updatedEntity = entity.copy(
                         streamUrl = currentUrl,
                         headersJson = serializeHeaders(currentHeaders)
@@ -401,6 +585,28 @@ class AppDownloadManager(
                 _progressFlow.value = updated
                 showDownloadFailedNotification(entity.title, reason, entity.downloadId)
                 showToast("${entity.title} download failed: $reason")
+                return@withContext
+            }
+
+            val finalUrl = resp.request.url.toString()
+            val contentType = resp.header("Content-Type")?.lowercase() ?: ""
+            val isHlsByHeadersOrUrl = HlsPlaylistParser.isHlsUrl(finalUrl) ||
+                    finalUrl.contains(".m3u8", ignoreCase = true) ||
+                    contentType.contains("mpegurl") ||
+                    contentType.contains("application/x-mpegurl") ||
+                    contentType.contains("audio/mpegurl") ||
+                    contentType.contains("application/vnd.apple.mpegurl")
+
+            val isHlsByBody = try {
+                val peek = resp.peekBody(1024).string()
+                peek.trimStart().startsWith("#EXTM3U")
+            } catch (_: Exception) {
+                false
+            }
+
+            if (isHlsByHeadersOrUrl || isHlsByBody) {
+                resp.close()
+                runHlsDownload(entity, targetFile, finalUrl, currentHeaders)
                 return@withContext
             }
 
@@ -545,6 +751,34 @@ class AppDownloadManager(
     }
 
     suspend fun checkAndUpdateProgress() = withContext(Dispatchers.IO) {
+        try {
+            val allDownloads = downloadDao.getAllDownloadsList()
+            for (dl in allDownloads) {
+                if (dl.status == "COMPLETED") {
+                    val file = dl.localFilePath?.let { File(it) }
+                    val isCorrupt = file == null || !file.exists() || file.length() < 100_000L || isFileM3u8OrHtml(file)
+                    if (isCorrupt) {
+                        try { file?.delete() } catch (_: Exception) {}
+                        downloadDao.updateFailureStatusById(
+                            dl.id,
+                            "FAILED",
+                            "Incomplete download (playlist text was saved). Tap Resume to redownload full video."
+                        )
+                        val updated = _progressFlow.value.toMutableMap()
+                        updated[dl.id] = DownloadProgress(
+                            id = dl.id,
+                            downloadedBytes = 0L,
+                            totalBytes = 0L,
+                            speedBytesPerSec = 0L,
+                            status = "FAILED",
+                            failureReason = "Incomplete download (playlist text was saved). Tap Resume to redownload full video."
+                        )
+                        _progressFlow.value = updated
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
         val query = DownloadManager.Query()
         val cursor = systemDownloadManager?.query(query) ?: return@withContext
         cursor.use { c ->
@@ -651,5 +885,232 @@ class AppDownloadManager(
             }
         } catch (_: Exception) {}
         null
+    }
+
+    private fun buildRequest(url: String, hdrs: Map<String, String>, rangeBytes: Long): Request {
+        val reqBuilder = Request.Builder().url(url)
+        if (rangeBytes > 0) {
+            reqBuilder.header("Range", "bytes=$rangeBytes-")
+        }
+        val ua = hdrs["User-Agent"]
+            ?: hdrs["user-agent"]
+            ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        reqBuilder.header("User-Agent", ua)
+
+        hdrs.forEach { (k, v) ->
+            if (!k.equals("Host", ignoreCase = true) &&
+                !k.equals("Range", ignoreCase = true) &&
+                !k.equals("User-Agent", ignoreCase = true)
+            ) {
+                reqBuilder.header(k, v)
+            }
+        }
+        return reqBuilder.build()
+    }
+
+    suspend fun fetchHlsVariants(url: String, headers: Map<String, String>): List<HlsVariant> = withContext(Dispatchers.IO) {
+        try {
+            val req = buildRequest(url, headers, 0L)
+            val resp = httpClient.newCall(req).execute()
+            if (!resp.isSuccessful) {
+                resp.close()
+                return@withContext emptyList()
+            }
+            val content = resp.body?.string() ?: return@withContext emptyList()
+            if (HlsPlaylistParser.isMasterPlaylist(content)) {
+                HlsPlaylistParser.parseMasterPlaylist(content, url).variants
+            } else {
+                emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun runHlsDownload(
+        entity: DownloadEntity,
+        targetFile: File,
+        manifestUrl: String,
+        headers: Map<String, String>
+    ) = withContext(Dispatchers.IO) {
+        val tempDir = File(context.filesDir, "hls_temp/${entity.id}")
+        if (!tempDir.exists()) {
+            tempDir.mkdirs()
+        }
+
+        try {
+            downloadDao.updateStatusById(entity.id, "FETCHING_PLAYLIST")
+            val pMap = _progressFlow.value.toMutableMap()
+            pMap[entity.id] = DownloadProgress(
+                id = entity.id,
+                downloadedBytes = 0L,
+                totalBytes = 0L,
+                speedBytesPerSec = 0L,
+                status = "FETCHING_PLAYLIST",
+                failureReason = null
+            )
+            _progressFlow.value = pMap
+
+            DownloadForegroundService.startService(context)
+
+            var content: String
+            var resolvedMediaPlaylistUrl = manifestUrl
+
+            val manifestReq = buildRequest(manifestUrl, headers, 0L)
+            val manifestResp = httpClient.newCall(manifestReq).execute()
+            if (!manifestResp.isSuccessful) {
+                manifestResp.close()
+                throw IllegalStateException("Failed to fetch HLS manifest (HTTP ${manifestResp.code})")
+            }
+            resolvedMediaPlaylistUrl = manifestResp.request.url.toString()
+            content = manifestResp.body?.string() ?: throw IllegalStateException("Empty HLS manifest response")
+
+            if (HlsPlaylistParser.isMasterPlaylist(content)) {
+                val master = HlsPlaylistParser.parseMasterPlaylist(content, resolvedMediaPlaylistUrl)
+                if (master.variants.isEmpty()) {
+                    throw IllegalStateException("Master playlist contains no streaming variants")
+                }
+
+                val matchedVariant = master.variants.firstOrNull {
+                    it.qualityLabel.equals(entity.quality, ignoreCase = true) ||
+                            (entity.quality.contains("1080") && it.qualityLabel == "1080p") ||
+                            (entity.quality.contains("720") && it.qualityLabel == "720p") ||
+                            (entity.quality.contains("4K") && it.qualityLabel == "4K") ||
+                            (entity.quality.contains("480") && it.qualityLabel == "480p") ||
+                            (entity.quality.contains("360") && it.qualityLabel == "360p")
+                } ?: master.variants.first()
+
+                resolvedMediaPlaylistUrl = matchedVariant.url
+                val mediaReq = buildRequest(resolvedMediaPlaylistUrl, headers, 0L)
+                val mediaResp = httpClient.newCall(mediaReq).execute()
+                if (!mediaResp.isSuccessful) {
+                    mediaResp.close()
+                    throw IllegalStateException("Failed to fetch media playlist from variant (HTTP ${mediaResp.code})")
+                }
+                resolvedMediaPlaylistUrl = mediaResp.request.url.toString()
+                content = mediaResp.body?.string() ?: throw IllegalStateException("Empty media playlist response")
+            }
+
+            val mediaPlaylist = HlsPlaylistParser.parseMediaPlaylist(content, resolvedMediaPlaylistUrl)
+            if (mediaPlaylist.segments.isEmpty()) {
+                throw IllegalStateException("HLS media playlist contains 0 downloadable segments")
+            }
+
+            downloadDao.updateStatusById(entity.id, "DOWNLOADING")
+            var lastDbSave = System.currentTimeMillis()
+
+            val downloader = HlsSegmentDownloader(httpClient = httpClient, concurrency = 4)
+            val downloadedSegments = downloader.downloadSegments(
+                playlist = mediaPlaylist,
+                headers = headers,
+                tempDir = tempDir
+            ) { downloadedBytes, totalEstimatedBytes, downloadedSegs, totalSegs, speedBytesPerSec ->
+                val progress = DownloadProgress(
+                    id = entity.id,
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = totalEstimatedBytes,
+                    speedBytesPerSec = speedBytesPerSec,
+                    status = "DOWNLOADING",
+                    failureReason = null,
+                    downloadedSegments = downloadedSegs,
+                    totalSegments = totalSegs
+                )
+                val updated = _progressFlow.value.toMutableMap()
+                updated[entity.id] = progress
+                _progressFlow.value = updated
+
+                val now = System.currentTimeMillis()
+                if (now - lastDbSave >= 2000) {
+                    lastDbSave = now
+                    downloadScope.launch {
+                        downloadDao.updateProgressById(
+                            entity.id,
+                            "DOWNLOADING",
+                            downloadedBytes,
+                            totalEstimatedBytes,
+                            targetFile.absolutePath
+                        )
+                    }
+                }
+            }
+
+            downloadDao.updateStatusById(entity.id, "MERGING")
+            val totalSegLength = downloadedSegments.sumOf { it.length() }
+            val mergingProgress = DownloadProgress(
+                id = entity.id,
+                downloadedBytes = totalSegLength,
+                totalBytes = totalSegLength,
+                speedBytesPerSec = 0L,
+                status = "MERGING",
+                failureReason = null,
+                downloadedSegments = downloadedSegments.size,
+                totalSegments = downloadedSegments.size
+            )
+            val updatedMerging = _progressFlow.value.toMutableMap()
+            updatedMerging[entity.id] = mergingProgress
+            _progressFlow.value = updatedMerging
+
+            val finalMediaFile = MediaRemuxer.remuxSegments(
+                context = context,
+                segmentFiles = downloadedSegments,
+                targetFile = targetFile,
+                tempDir = tempDir
+            )
+
+            val finalSize = finalMediaFile.length()
+            if (finalSize < 100_000L) {
+                try { finalMediaFile.delete() } catch (_: Exception) {}
+                throw IllegalStateException("Remuxed video file is too small ($finalSize bytes), download failed")
+            }
+
+            downloadDao.updateProgressById(
+                entity.id,
+                "COMPLETED",
+                finalSize,
+                finalSize,
+                finalMediaFile.absolutePath
+            )
+
+            val finalProgress = DownloadProgress(
+                id = entity.id,
+                downloadedBytes = finalSize,
+                totalBytes = finalSize,
+                speedBytesPerSec = 0L,
+                status = "COMPLETED",
+                failureReason = null,
+                downloadedSegments = downloadedSegments.size,
+                totalSegments = downloadedSegments.size
+            )
+            val updatedFinal = _progressFlow.value.toMutableMap()
+            updatedFinal[entity.id] = finalProgress
+            _progressFlow.value = updatedFinal
+
+            showToast("${entity.title} download completed!")
+        } catch (e: Exception) {
+            if (e is CancellationException) {
+                downloadDao.updateStatusById(entity.id, "PAUSED")
+                val updated = _progressFlow.value.toMutableMap()
+                val curr = updated[entity.id]
+                if (curr != null) {
+                    updated[entity.id] = curr.copy(status = "PAUSED", speedBytesPerSec = 0L)
+                    _progressFlow.value = updated
+                }
+            } else {
+                val reason = classifyFailureReason(e = e, targetFile = targetFile)
+                downloadDao.updateFailureStatusById(entity.id, "FAILED", reason)
+                val updated = _progressFlow.value.toMutableMap()
+                val curr = updated[entity.id]
+                if (curr != null) {
+                    updated[entity.id] = curr.copy(status = "FAILED", speedBytesPerSec = 0L, failureReason = reason)
+                } else {
+                    updated[entity.id] = DownloadProgress(entity.id, 0L, entity.fileSizeBytes, 0L, "FAILED", reason)
+                }
+                _progressFlow.value = updated
+                showDownloadFailedNotification(entity.title, reason, entity.downloadId)
+                showToast("${entity.title} download failed: $reason")
+            }
+        } finally {
+            activeJobs.remove(entity.id)
+        }
     }
 }

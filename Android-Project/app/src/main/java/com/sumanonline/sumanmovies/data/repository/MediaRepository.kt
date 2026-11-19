@@ -13,6 +13,7 @@ import com.sumanonline.sumanmovies.data.models.ServerState
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.data.models.TvChannel
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
@@ -76,7 +77,9 @@ class MediaRepository(
         season: Int = 1,
         episode: Int = 1,
         positionMs: Long,
-        durationMs: Long
+        durationMs: Long,
+        backdropUrl: String? = null,
+        stillUrl: String? = null
     ) {
         val isCompleted = durationMs > 0 && positionMs >= (durationMs * 0.95)
         val cleanBase = title
@@ -87,12 +90,17 @@ class MediaRepository(
             .ifBlank { title }
         val isSeries = mediaType == MediaType.SERIES || mediaType == MediaType.ANIME || mediaType == MediaType.DRAMA
         val resolvedTitle = if (isSeries) "$cleanBase - S${season}E${episode}" else title
+        val existing = database.watchHistoryDao().getProgress("$mediaId:s${season}e${episode}")
+        val finalBackdrop = backdropUrl ?: existing?.backdropUrl
+        val finalStill = stillUrl ?: existing?.stillUrl
         val entity = WatchHistoryEntity(
             id = "$mediaId:s${season}e${episode}",
             mediaId = mediaId,
             title = resolvedTitle,
             mediaType = mediaType.name,
-            posterUrl = posterUrl,
+            posterUrl = posterUrl ?: existing?.posterUrl,
+            backdropUrl = finalBackdrop,
+            stillUrl = finalStill,
             seasonNumber = season,
             episodeNumber = episode,
             positionMs = positionMs,
@@ -170,8 +178,21 @@ class MediaRepository(
         stream: StreamSource,
         episode: Episode? = null
     ): Long {
-        return downloadManager.enqueueDownload(item, stream, episode)
+        val resolvedYear = if (!item.year.isNullOrBlank()) {
+            item.year
+        } else {
+            itemCache[item.id]?.year
+        }
+        val enrichedItem = if (resolvedYear != null && item.year != resolvedYear) {
+            item.copy(year = resolvedYear)
+        } else {
+            item
+        }
+        return downloadManager.enqueueDownload(enrichedItem, stream, episode)
     }
+
+    suspend fun fetchHlsVariants(url: String, headers: Map<String, String>) =
+        downloadManager.fetchHlsVariants(url, headers)
 
     suspend fun pauseDownload(id: String) {
         downloadManager.pauseDownload(id)
@@ -201,15 +222,27 @@ class MediaRepository(
         serverSelectionManager.setSelectedServer(mediaId, server)
     }
 
-    suspend fun resolveServer(
+    fun getCachedServerState(
         server: StreamingServer,
         title: String,
         season: Int = 1,
         episode: Int = 1,
         providerId: String? = null,
         releaseYear: String? = null
+    ): ServerState? {
+        return playbackResolver.getCachedServer(server, title, season, episode, providerId, releaseYear)
+    }
+
+    suspend fun resolveServer(
+        server: StreamingServer,
+        title: String,
+        season: Int = 1,
+        episode: Int = 1,
+        providerId: String? = null,
+        releaseYear: String? = null,
+        forceRefresh: Boolean = false
     ): ServerState {
-        return playbackResolver.resolveServer(server, title, season, episode, providerId, releaseYear)
+        return playbackResolver.resolveServer(server, title, season, episode, providerId, releaseYear, forceRefresh)
     }
 
     suspend fun resolveLockerUrl(url: String): StreamSource? {
@@ -227,19 +260,11 @@ class MediaRepository(
         providerId: String? = null,
         releaseYear: String? = null
     ): Map<StreamingServer, ServerState> = coroutineScope {
-        val mbDef = async { resolveServer(StreamingServer.MOVIEBOX, title, season, episode, providerId, releaseYear) }
-        val fourkDef = async { resolveServer(StreamingServer.FOURKHDHUB, title, season, episode, providerId, releaseYear) }
-        val hdhub4uDef = async { resolveServer(StreamingServer.HDHUB4U, title, season, episode, providerId, releaseYear) }
-        val play4uDef = async { resolveServer(StreamingServer.PLAY4U, title, season, episode, providerId, releaseYear) }
-        val dramaDef = async { resolveServer(StreamingServer.DRAMACHI, title, season, episode, providerId, releaseYear) }
-
-        mapOf(
-            StreamingServer.PLAY4U to play4uDef.await(),
-            StreamingServer.MOVIEBOX to mbDef.await(),
-            StreamingServer.HDHUB4U to hdhub4uDef.await(),
-            StreamingServer.FOURKHDHUB to fourkDef.await(),
-            StreamingServer.DRAMACHI to dramaDef.await()
-        )
+        val servers = StreamingServer.entries
+        val deferreds = servers.associateWith { server ->
+            async { resolveServer(server, title, season, episode, providerId, releaseYear) }
+        }
+        deferreds.mapValues { it.value.await() }
     }
 
     suspend fun getHomeHeroBanner(): MediaItem? {
@@ -291,7 +316,64 @@ class MediaRepository(
     suspend fun getPakistaniDrama(): List<MediaItem> = tmdbRepo.getPakistaniDrama(1)
     suspend fun getPopularDramas(): List<MediaItem> = tmdbRepo.getPopularDramas(1)
     suspend fun getAsianDramas(): List<MediaItem> = tmdbRepo.getAsianDramas(1)
-    suspend fun getLiveTvChannels(): List<MediaItem> = backendRepo.getTvChannels()
+    suspend fun getLiveTvChannels(): List<MediaItem> = getLiveChannels().map { it.toMediaItem() }
+
+    private var cachedTvChannels: List<TvChannel> = emptyList()
+    private var tvChannelsLastFetched: Long = 0L
+
+    suspend fun getLiveChannels(category: String? = null, forceRefresh: Boolean = false): List<TvChannel> {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedTvChannels.isNotEmpty() && (now - tvChannelsLastFetched) < 15 * 60 * 1000L) {
+            return if (category.isNullOrBlank()) {
+                cachedTvChannels
+            } else {
+                cachedTvChannels.filter { it.groupTitle?.contains(category, ignoreCase = true) == true }
+            }
+        }
+
+        val remoteChannels = try {
+            backendRepo.fetchTvChannels(category)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val channels = if (remoteChannels.isNotEmpty()) {
+            remoteChannels
+        } else if (cachedTvChannels.isNotEmpty()) {
+            cachedTvChannels
+        } else {
+            getCuratedTvChannels()
+        }
+
+        if (channels.isNotEmpty()) {
+            cachedTvChannels = channels
+            tvChannelsLastFetched = now
+            channels.forEach { cacheItem(it.toMediaItem()) }
+        }
+
+        return if (category.isNullOrBlank()) {
+            channels
+        } else {
+            channels.filter { it.groupTitle?.contains(category, ignoreCase = true) == true }
+        }
+    }
+
+    private fun getCuratedTvChannels(): List<TvChannel> = listOf(
+        TvChannel("aajtak", "Aaj Tak HD", "https://live-aajtak.akamaized.net/hls/live/2016312/aajtak/aajtakmaster.m3u8", "https://upload.wikimedia.org/wikipedia/commons/2/28/Aaj_Tak_logo.png", "News", "India", "Hindi"),
+        TvChannel("indiatoday", "India Today HD", "https://indiatodaylive.akamaized.net/hls/live/2014320/indiatoday/indiatodaymaster.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/India_Today_logo.svg/320px-India_Today_logo.svg.png", "News", "India", "English"),
+        TvChannel("ndtv247", "NDTV 24x7", "https://ndtv24x7elemarchana.akamaized.net/hls/live/2003678/ndtv24x7/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/NDTV_24x7_logo.svg/320px-NDTV_24x7_logo.svg.png", "News", "India", "English"),
+        TvChannel("abpnews", "ABP News HD", "https://abp-i.akamaihd.net/hls/live/765529/abpnews/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/ABP_News_Logo.png/320px-ABP_News_Logo.png", "News", "India", "Hindi"),
+        TvChannel("ddsports", "DD Sports HD", "https://d360.live.mxtv.in/live/ddsports/live.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/DD_Sports_logo_2022.png/320px-DD_Sports_logo_2022.png", "Sports", "India", "Hindi"),
+        TvChannel("ddnational", "DD National HD", "https://d360.live.mxtv.in/live/ddnational/live.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/DD_National_logo_2022.png/320px-DD_National_logo_2022.png", "Entertainment", "India", "Hindi"),
+        TvChannel("skynews", "Sky News UK", "https://skynews.akamaized.net/hls/live/2026362/skynews/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Sky_News_logo_2015.svg/320px-Sky_News_logo_2015.svg.png", "News", "UK", "English"),
+        TvChannel("redbulltv", "Red Bull TV HD", "https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Red_Bull_TV_logo.svg/320px-Red_Bull_TV_logo.svg.png", "Sports", "Global", "English"),
+        TvChannel("aljazeera", "Al Jazeera English HD", "https://live-hls-web-aje.getaj.net/AJE/01.m3u8", "https://upload.wikimedia.org/wikipedia/en/thumb/f/f2/Aljazeera_eng.svg/320px-Aljazeera_eng.svg.png", "News", "Qatar", "English"),
+        TvChannel("france24", "France 24 English HD", "https://f24hls-i.akamaihd.net/hls/live/221193/F24_EN_LO_HLS/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/France_24_logo.svg/320px-France_24_logo.svg.png", "News", "France", "English"),
+        TvChannel("dwenglish", "DW English HD", "https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Deutsche_Welle_symbol_2012.svg/320px-Deutsche_Welle_symbol_2012.svg.png", "Documentary", "Germany", "English"),
+        TvChannel("nasatv", "NASA TV HD", "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/320px-NASA_logo.svg.png", "Documentary", "USA", "English"),
+        TvChannel("bloomberg", "Bloomberg Quicktake HD", "https://bloomberg.com/media-manifest/streams/us.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Bloomberg_Television_logo.svg/320px-Bloomberg_Television_logo.svg.png", "News", "USA", "English"),
+        TvChannel("euronews", "Euronews HD", "https://euronews-euronews-world-1-eu.plex.wurl.tv/playlist.m3u8", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Euronews_2016_logo.svg/320px-Euronews_2016_logo.svg.png", "News", "Europe", "English")
+    )
 
     suspend fun searchAll(query: String, bypassCache: Boolean = false): List<MediaItem> {
         val cleanQuery = query.trim().lowercase(java.util.Locale.ROOT)
@@ -381,7 +463,18 @@ class MediaRepository(
                 return cached.second
             }
         }
-        val results = movieBoxClient.search(query, page)
+        val results = try {
+            val backendResults = withTimeoutOrNull(2500L) {
+                backendRepo.search(query, "moviebox")
+            }
+            if (!backendResults.isNullOrEmpty()) {
+                backendResults.distinctBy { it.id }
+            } else {
+                movieBoxClient.search(query, page).distinctBy { it.id }
+            }
+        } catch (_: Exception) {
+            movieBoxClient.search(query, page).distinctBy { it.id }
+        }.distinctBy { it.id }
         results.forEach { cacheItem(it) }
         if (page == 1 && results.isNotEmpty()) {
             synchronized(movieBoxSearchCache) {
@@ -393,6 +486,21 @@ class MediaRepository(
 
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
         return tmdbRepo.getSeasonEpisodes(tvId, seasonNumber)
+    }
+
+    suspend fun getSeasonEpisodesForMedia(mediaId: String, seasonNumber: Int): List<Episode> {
+        if (mediaId.startsWith("moviebox:")) {
+            val cleanId = mediaId.removePrefix("moviebox:")
+            val seasons = movieBoxClient.getSeasonInfo(cleanId)
+            val match = seasons.firstOrNull { it.seasonNumber == seasonNumber }
+            if (match != null && match.episodes.isNotEmpty()) {
+                return match.episodes
+            }
+        }
+        val tmdbId = mediaId.toIntOrNull()
+        return if (tmdbId != null) {
+            getSeasonEpisodes(tmdbId, seasonNumber)
+        } else emptyList()
     }
 
     suspend fun getCategoryMedia(categoryKey: String, page: Int = 1): Pair<List<MediaItem>, Int> {

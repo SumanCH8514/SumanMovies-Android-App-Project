@@ -1,6 +1,6 @@
 export type MediaType = "movie" | "series";
 
-export type ProviderKind = "moviebox" | "fourkhdhub" | "dramachi" | "tv";
+export type ProviderKind = "moviebox" | "fourkhdhub" | "dramachi" | "play4u" | "tv" | "reanime";
 
 export interface CatalogItem {
   id: string;

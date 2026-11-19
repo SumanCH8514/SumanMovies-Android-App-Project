@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -398,7 +399,7 @@ fun ActivityScreen(
                 }
             }
         } else {
-            items(displayList, key = { it.id }) { item ->
+            itemsIndexed(displayList, key = { index, item -> "${item.id}_$index" }) { _, item ->
                 val isSeries = item.mediaType.equals("SERIES", ignoreCase = true) ||
                         item.mediaType.equals("ANIME", ignoreCase = true) ||
                         item.mediaType.equals("DRAMA", ignoreCase = true)
@@ -495,9 +496,19 @@ private fun ActivityHistoryCard(
                     .clip(RoundedCornerShape(10.dp))
                     .background(CardElevated)
             ) {
-                if (!item.posterUrl.isNullOrBlank()) {
+                // For series: prefer episode still → backdrop → poster
+                // For movies: prefer backdrop → poster
+                val displayImage = if (isMovie) {
+                    item.backdropUrl?.takeIf { it.isNotBlank() } ?: item.posterUrl
+                } else {
+                    item.stillUrl?.takeIf { it.isNotBlank() }
+                        ?: item.backdropUrl?.takeIf { it.isNotBlank() }
+                        ?: item.posterUrl
+                }
+
+                if (!displayImage.isNullOrBlank()) {
                     AsyncImage(
-                        model = item.posterUrl,
+                        model = displayImage,
                         contentDescription = cleanTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

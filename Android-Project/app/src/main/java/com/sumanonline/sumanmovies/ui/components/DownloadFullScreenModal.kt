@@ -113,14 +113,28 @@ fun DownloadFullScreenModal(
     }
 
     val groupedStreams = remember(streams) {
-        streams.groupBy { getQualityBucket(it) }
+        streams
+            .filterNot { s ->
+                val title = s.title?.trim() ?: ""
+                val url = s.url.trim().lowercase()
+                ((title.equals("4K Movies", ignoreCase = true) || title.equals("4K Movie", ignoreCase = true)) &&
+                    (url.contains("4khdhub") || s.provider.equals("hdhub4u", ignoreCase = true))) ||
+                    (url.contains("4khdhub.one") && (title.equals("4K Movies", ignoreCase = true) || url.trimEnd('/') == "https://4khdhub.one"))
+            }
+            .groupBy { getQualityBucket(it) }
     }
 
     val expandedCategories = remember(server, streams) {
         mutableStateMapOf<String, Boolean>().apply {
-            val firstAvailable = standardCategories.firstOrNull { groupedStreams.containsKey(it.id) }?.id
-            if (firstAvailable != null) {
-                put(firstAvailable, true)
+            val defaultCategory = when {
+                groupedStreams.containsKey("720p") && groupedStreams["720p"]?.isNotEmpty() == true -> "720p"
+                groupedStreams.containsKey("1080p") && groupedStreams["1080p"]?.isNotEmpty() == true -> "1080p"
+                else -> standardCategories.firstOrNull {
+                    groupedStreams.containsKey(it.id) && groupedStreams[it.id]?.isNotEmpty() == true
+                }?.id
+            }
+            if (defaultCategory != null) {
+                put(defaultCategory, true)
             }
         }
     }

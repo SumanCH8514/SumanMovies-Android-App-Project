@@ -12,6 +12,8 @@ import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
 import com.sumanonline.sumanmovies.util.MediaMatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 class PlaybackResolver(
@@ -21,43 +23,87 @@ class PlaybackResolver(
     private val hdHub4uClient: HDHub4uMobileClient = HDHub4uMobileClient(),
     private val play4UClient: Play4UMobileClient = Play4UMobileClient()
 ) {
-    suspend fun resolveServer(
+    private val serverCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ServerState>>()
+    private val cacheTtlMs = 15 * 60 * 1000L
+
+    fun getCachedServer(
         server: StreamingServer,
         title: String,
         season: Int = 1,
         episode: Int = 1,
         providerId: String? = null,
         releaseYear: String? = null
+    ): ServerState? {
+        val cleanTitle = MediaMatcher.normalizeForMatching(title)
+        val key = "${server.name}:$cleanTitle:$season:$episode:${providerId ?: ""}:${releaseYear ?: ""}"
+        val entry = serverCache[key] ?: return null
+        if (System.currentTimeMillis() - entry.first < cacheTtlMs && entry.second.status == ServerAvailability.AVAILABLE) {
+            return entry.second
+        }
+        return null
+    }
+
+    suspend fun resolveServer(
+        server: StreamingServer,
+        title: String,
+        season: Int = 1,
+        episode: Int = 1,
+        providerId: String? = null,
+        releaseYear: String? = null,
+        forceRefresh: Boolean = false
     ): ServerState = withContext(Dispatchers.IO) {
+        val cleanTitle = MediaMatcher.normalizeForMatching(title)
+        val key = "${server.name}:$cleanTitle:$season:$episode:${providerId ?: ""}:${releaseYear ?: ""}"
+        if (!forceRefresh) {
+            val cached = serverCache[key]
+            if (cached != null && System.currentTimeMillis() - cached.first < cacheTtlMs && cached.second.status == ServerAvailability.AVAILABLE) {
+                return@withContext cached.second
+            }
+        }
+
         try {
-            val (rawStreams, subtitles) = when (server) {
-                StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId, releaseYear)
-                StreamingServer.FOURKHDHUB -> resolveFourKHdHub(title, season, episode, providerId, releaseYear)
-                StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId, releaseYear)
-                StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId, releaseYear)
-                StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId, releaseYear)
-            }
+            val serverTimeoutMs = if (server == StreamingServer.MOVIEBOX) 30000L else 12000L
+            val state = kotlinx.coroutines.withTimeoutOrNull(serverTimeoutMs) {
+                val (rawStreams, subtitles) = when (server) {
+                    StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId, releaseYear)
+                    StreamingServer.FOURKHDHUB -> resolveFourKHdHub(title, season, episode, providerId, releaseYear)
+                    StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId, releaseYear)
+                    StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId, releaseYear)
+                    StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId, releaseYear)
+                }
 
-            val validStreams = rawStreams.filter { validateStreamSource(it) }
+                val validStreams = rawStreams.filter { validateStreamSource(it) }
 
-            if (validStreams.isNotEmpty()) {
-                val best = determineBestQuality(validStreams)
-                ServerState(
-                    server = server,
-                    status = ServerAvailability.AVAILABLE,
-                    streams = validStreams,
-                    subtitles = subtitles,
-                    bestQuality = best
-                )
-            } else {
-                ServerState(
-                    server = server,
-                    status = ServerAvailability.UNAVAILABLE,
-                    streams = emptyList(),
-                    subtitles = emptyList(),
-                    errorMessage = "No streaming links found on ${server.displayName}"
-                )
+                if (validStreams.isNotEmpty()) {
+                    val best = determineBestQuality(validStreams)
+                    ServerState(
+                        server = server,
+                        status = ServerAvailability.AVAILABLE,
+                        streams = validStreams,
+                        subtitles = subtitles,
+                        bestQuality = best
+                    )
+                } else {
+                    ServerState(
+                        server = server,
+                        status = ServerAvailability.UNAVAILABLE,
+                        streams = emptyList(),
+                        subtitles = emptyList(),
+                        errorMessage = "No streaming links found on ${server.displayName}"
+                    )
+                }
+            } ?: ServerState(
+                server = server,
+                status = ServerAvailability.UNAVAILABLE,
+                streams = emptyList(),
+                subtitles = emptyList(),
+                errorMessage = "${server.displayName} response timed out"
+            )
+
+            if (state.status == ServerAvailability.AVAILABLE) {
+                serverCache[key] = Pair(System.currentTimeMillis(), state)
             }
+            state
         } catch (e: Exception) {
             ServerState(
                 server = server,
@@ -75,78 +121,102 @@ class PlaybackResolver(
         episode: Int,
         providerId: String?,
         releaseYear: String? = null
-    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> = coroutineScope {
         if (providerId?.startsWith("moviebox:") == true) {
-            val cleanId = providerId.removePrefix("moviebox:")
-            val (directStreams, directSubs) = movieBoxClient.resolveStreams(cleanId, season, episode)
-            val backendRes = try {
-                backendRepo.getStreams("moviebox", cleanId, season, episode)
+            val cleanId = providerId.removePrefix("moviebox:").substringBefore(":").trim()
+            val (directStreams, directSubs) = try {
+                movieBoxClient.resolveStreams(cleanId, season, episode)
             } catch (_: Exception) { Pair(emptyList(), emptyList()) }
-            val mergedStreams = (directStreams + backendRes.first).distinctBy { it.url }
-            val mergedSubs = (directSubs + backendRes.second).distinctBy { it.url }
-            if (mergedStreams.isNotEmpty()) {
-                return Pair(mergedStreams, mergedSubs)
+            if (directStreams.isNotEmpty()) {
+                return@coroutineScope Pair(directStreams, directSubs)
             }
-            return backendRes
+            val backendJob = try {
+                kotlinx.coroutines.withTimeoutOrNull(2500L) {
+                    backendRepo.getStreams("moviebox", cleanId, season, episode)
+                }
+            } catch (_: Exception) { null }
+            val backendStreams = backendJob?.first ?: emptyList()
+            val backendSubs = backendJob?.second ?: emptyList()
+            if (backendStreams.isNotEmpty()) {
+                return@coroutineScope Pair(backendStreams, backendSubs)
+            }
+            return@coroutineScope Pair(emptyList(), emptyList())
         }
 
         val queries = MediaMatcher.buildSearchQueries(title)
-        val localMatches = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
-        for (q in queries) {
-            val results = movieBoxClient.search(q)
-            if (results.isNotEmpty()) {
-                localMatches.addAll(results)
-                break
+
+        val localSearchDeferred = async {
+            val list = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+            for (q in queries) {
+                val results = try {
+                    movieBoxClient.search(q)
+                } catch (_: Exception) { emptyList() }
+                if (results.isNotEmpty()) {
+                    list.addAll(results)
+                    break
+                }
             }
+            list
         }
 
-        val topLocal = MediaMatcher.findBestMatch(
-            localMatches,
-            targetTitle = title,
-            targetYear = releaseYear,
-            season = season,
-            isSeries = season > 0
-        )
+        val backendSearchDeferred = async {
+            val list = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+            for (q in queries) {
+                val results = try {
+                    kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                        backendRepo.search(q, "moviebox")
+                    }
+                } catch (_: Exception) { null }
+                if (!results.isNullOrEmpty()) {
+                    list.addAll(results)
+                    break
+                }
+            }
+            list
+        }
 
-        if (topLocal != null) {
-            val cleanId = topLocal.id.removePrefix("moviebox:")
-            val (directStreams, directSubs) = movieBoxClient.resolveStreams(cleanId, season, episode)
-            val backendRes = try {
-                backendRepo.getStreams("moviebox", cleanId, season, episode)
+        val localMatches = localSearchDeferred.await()
+        val backendSearch = backendSearchDeferred.await()
+
+        val allCandidates = (localMatches + backendSearch).distinctBy { it.id }
+        val scoredCandidates = allCandidates.map { cand ->
+            cand to MediaMatcher.scoreCandidate(
+                cand,
+                targetTitle = title,
+                targetYear = releaseYear,
+                season = season,
+                isSeries = season > 0
+            )
+        }
+        .filter { it.second >= MediaMatcher.MIN_MATCH_SCORE }
+        .sortedByDescending { it.second }
+
+        val candidatesToTry = scoredCandidates.map {
+            it.first.id.removePrefix("moviebox:").substringBefore(":").trim()
+        }.distinct().take(4)
+
+        for (cid in candidatesToTry) {
+            val (directStreams, directSubs) = try {
+                movieBoxClient.resolveStreams(cid, season, episode)
             } catch (_: Exception) { Pair(emptyList(), emptyList()) }
-            val mergedStreams = (directStreams + backendRes.first).distinctBy { it.url }
-            val mergedSubs = (directSubs + backendRes.second).distinctBy { it.url }
-            if (mergedStreams.isNotEmpty()) {
-                return Pair(mergedStreams, mergedSubs)
-            }
-            if (backendRes.first.isNotEmpty()) {
-                return backendRes
-            }
-        }
 
-        val backendSearch = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
-        for (q in queries) {
-            val results = backendRepo.search(q, "moviebox")
-            if (results.isNotEmpty()) {
-                backendSearch.addAll(results)
-                break
+            if (directStreams.isNotEmpty()) {
+                return@coroutineScope Pair(directStreams, directSubs)
+            }
+
+            val backendJob = try {
+                kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                    backendRepo.getStreams("moviebox", cid, season, episode)
+                }
+            } catch (_: Exception) { null }
+            val backendStreams = backendJob?.first ?: emptyList()
+            val backendSubs = backendJob?.second ?: emptyList()
+            if (backendStreams.isNotEmpty()) {
+                return@coroutineScope Pair(backendStreams, backendSubs)
             }
         }
 
-        val topBackend = MediaMatcher.findBestMatch(
-            backendSearch,
-            targetTitle = title,
-            targetYear = releaseYear,
-            season = season,
-            isSeries = season > 0
-        )
-
-        if (topBackend != null) {
-            val cleanId = topBackend.id.removePrefix("moviebox:")
-            return backendRepo.getStreams("moviebox", cleanId, season, episode)
-        }
-
-        return Pair(emptyList(), emptyList())
+        Pair(emptyList(), emptyList())
     }
 
     private suspend fun resolveFourKHdHub(
@@ -406,8 +476,15 @@ class PlaybackResolver(
 
     private fun validateStreamSource(stream: StreamSource): Boolean {
         if (stream.url.isBlank()) return false
-        val lower = stream.url.lowercase()
+        val lower = stream.url.lowercase().trim()
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) return false
+        val title = stream.title?.lowercase()?.trim().orEmpty()
+        if (title == "4k movies" && (lower.contains("4khdhub") || stream.provider.equals("hdhub4u", ignoreCase = true))) {
+            return false
+        }
+        if (lower.contains("4khdhub.one") && (title == "4k movies" || lower.trimEnd('/') == "https://4khdhub.one" || lower.trimEnd('/') == "http://4khdhub.one")) {
+            return false
+        }
         return true
     }
 

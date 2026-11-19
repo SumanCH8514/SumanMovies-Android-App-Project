@@ -405,19 +405,97 @@ class ExoPlayerManager(private val context: Context) {
         }
     }
 
+    private fun resolveAudioLanguageCode(language: String?, label: String?, displayName: String): String? {
+        val lang = language?.trim()?.lowercase()
+        if (!lang.isNullOrBlank() && lang != "und") {
+            return when (lang) {
+                "hindi", "hin", "hi" -> "hi"
+                "english", "eng", "en" -> "en"
+                "tamil", "tam", "ta" -> "ta"
+                "telugu", "tel", "te" -> "te"
+                "malayalam", "mal", "ml" -> "ml"
+                "kannada", "kan", "kn" -> "kn"
+                "bengali", "ben", "bn" -> "bn"
+                "marathi", "mar", "mr" -> "mr"
+                "punjabi", "pan", "pa" -> "pa"
+                "spanish", "spa", "es" -> "es"
+                "french", "fra", "fre", "fr" -> "fr"
+                "german", "ger", "deu", "de" -> "de"
+                "japanese", "jpn", "ja" -> "ja"
+                "korean", "kor", "ko" -> "ko"
+                "chinese", "chi", "zho", "zh" -> "zh"
+                "arabic", "ara", "ar" -> "ar"
+                "russian", "rus", "ru" -> "ru"
+                else -> lang
+            }
+        }
+        val combined = "$label $displayName".lowercase()
+        return when {
+            combined.contains("hindi") -> "hi"
+            combined.contains("english") -> "en"
+            combined.contains("tamil") -> "ta"
+            combined.contains("telugu") -> "te"
+            combined.contains("malayalam") -> "ml"
+            combined.contains("kannada") -> "kn"
+            combined.contains("bengali") -> "bn"
+            combined.contains("marathi") -> "mr"
+            combined.contains("punjabi") -> "pa"
+            combined.contains("spanish") -> "es"
+            combined.contains("french") -> "fr"
+            combined.contains("german") -> "de"
+            combined.contains("japanese") -> "ja"
+            combined.contains("korean") -> "ko"
+            combined.contains("chinese") -> "zh"
+            combined.contains("arabic") -> "ar"
+            combined.contains("russian") -> "ru"
+            else -> null
+        }
+    }
+
     fun selectAudioTrack(track: PlayerAudioTrack) {
         val player = getPlayer()
-        val override = TrackSelectionOverride(track.mediaTrackGroup, track.trackIndex)
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
+        val currentAudioGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+
+        var targetGroup = track.mediaTrackGroup
+        var targetIndex = track.trackIndex
+
+        val matched = currentAudioGroups.find { g ->
+            g.mediaTrackGroup == track.mediaTrackGroup ||
+            (g.length > track.trackIndex && g.getTrackFormat(track.trackIndex).id == track.id) ||
+            (0 until g.length).any { i ->
+                val f = g.getTrackFormat(i)
+                (f.language != null && f.language.equals(track.language, ignoreCase = true)) ||
+                (f.label != null && f.label.equals(track.label, ignoreCase = true))
+            }
+        }
+        if (matched != null) {
+            targetGroup = matched.mediaTrackGroup
+            val idx = (0 until matched.length).firstOrNull { i ->
+                val f = matched.getTrackFormat(i)
+                f.id == track.id ||
+                (f.language != null && f.language.equals(track.language, ignoreCase = true)) ||
+                (f.label != null && f.label.equals(track.label, ignoreCase = true))
+            } ?: track.trackIndex
+            targetIndex = idx
+        }
+
+        val override = TrackSelectionOverride(targetGroup, targetIndex)
+        val resolvedLang = resolveAudioLanguageCode(track.language, track.label, track.displayName)
+
+        val paramsBuilder = (player.trackSelectionParameters as? DefaultTrackSelector.Parameters)?.buildUpon()
+            ?.setExceedAudioConstraintsIfNecessary(true)
+            ?: player.trackSelectionParameters.buildUpon()
+
+        paramsBuilder
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .addOverride(override)
-            .apply {
-                if (!track.language.isNullOrBlank()) {
-                    setPreferredAudioLanguage(track.language)
-                }
-            }
-            .build()
+
+        if (!resolvedLang.isNullOrBlank()) {
+            paramsBuilder.setPreferredAudioLanguage(resolvedLang)
+        }
+
+        player.trackSelectionParameters = paramsBuilder.build()
 
         _audioTracks.value = _audioTracks.value.map {
             it.copy(isSelected = it.id == track.id)

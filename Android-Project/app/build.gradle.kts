@@ -99,11 +99,6 @@ tasks.register<Copy>("copyDebugApk") {
     rename { "SumanMovies-v1.0.0-debug.apk" }
 }
 
-tasks.register<Exec>("gitCommitAndPush") {
-    workingDir = rootProject.file("..")
-    commandLine("cmd", "/c", "git add Android-Project/app/build.gradle.kts && git commit -m \"chore: clean build scripts and sync gradle tasks\" && git push origin main > scratch_git.txt 2>&1")
-}
-
 
 
 

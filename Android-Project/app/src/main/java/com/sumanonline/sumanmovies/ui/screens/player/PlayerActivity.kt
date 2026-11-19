@@ -39,6 +39,7 @@ class PlayerActivity : ComponentActivity() {
         val title = intent.getStringExtra("EXTRA_TITLE") ?: "Video Player"
         val mediaTypeStr = intent.getStringExtra("EXTRA_MEDIA_TYPE") ?: "MOVIE"
         val posterUrl = intent.getStringExtra("EXTRA_POSTER_URL")
+        val backdropUrl = intent.getStringExtra("EXTRA_BACKDROP_URL")
         val releaseYear = intent.getStringExtra("EXTRA_RELEASE_YEAR")
         val streamUrl = intent.getStringExtra("EXTRA_STREAM_URL")
         val streamFormat = intent.getStringExtra("EXTRA_STREAM_FORMAT")
@@ -97,6 +98,7 @@ class PlayerActivity : ComponentActivity() {
             title = title,
             mediaType = mediaType,
             posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
             releaseYear = releaseYear,
             initialStreamUrl = streamUrl,
             initialFormat = streamFormat,

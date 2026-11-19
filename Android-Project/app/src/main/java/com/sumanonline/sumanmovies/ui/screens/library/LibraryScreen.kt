@@ -311,18 +311,39 @@ fun LibraryScreen(
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                             }
+                                            "FETCHING_PLAYLIST" -> {
+                                                Text(
+                                                    text = "PARSING PLAYLIST",
+                                                    color = accent,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            "MERGING" -> {
+                                                Text(
+                                                    text = "FINALIZING MP4",
+                                                    color = Color(0xFF10B981),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
                                             else -> {
                                                 Text(
                                                     text = "DOWNLOADING",
                                                     color = accent,
                                                     fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    softWrap = false
                                                 )
                                                 if (speedBytes > 0L) {
                                                     Text(
                                                         text = " • ${formatSpeed(speedBytes)}",
                                                         color = TextMuted,
-                                                        fontSize = 11.sp
+                                                        fontSize = 12.sp,
+                                                        maxLines = 1,
+                                                        softWrap = false,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 }
                                             }
@@ -346,13 +367,18 @@ fun LibraryScreen(
                                                     "Download failed • Tap Resume to retry"
                                                 }
                                             }
+                                            "FETCHING_PLAYLIST" -> "Resolving stream variants and manifest..."
+                                            "MERGING" -> "Remuxing segments into single playable MP4 file..."
                                             else -> {
+                                                val segSuffix = if (liveProgress != null && liveProgress.totalSegments > 0) {
+                                                    " • ${liveProgress.downloadedSegments}/${liveProgress.totalSegments} segs"
+                                                } else ""
                                                 if (totalBytes > 0L) {
-                                                    "${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} ($percent%)"
+                                                    "${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} ($percent%)$segSuffix"
                                                 } else if (downloadedBytes > 0L) {
-                                                    "${formatBytes(downloadedBytes)} downloaded"
+                                                    "${formatBytes(downloadedBytes)} downloaded$segSuffix"
                                                 } else {
-                                                    "Starting download..."
+                                                    if (segSuffix.isNotEmpty()) "Downloading$segSuffix" else "Starting download..."
                                                 }
                                             }
                                         },
@@ -364,15 +390,26 @@ fun LibraryScreen(
 
                                     if (liveStatus != "COMPLETED") {
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        LinearProgressIndicator(
-                                            progress = { progressFloat },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(4.dp)
-                                                .clip(RoundedCornerShape(2.dp)),
-                                            color = if (liveStatus == "PAUSED") Color(0xFFF59E0B) else accent,
-                                            trackColor = Color.White.copy(alpha = 0.1f)
-                                        )
+                                        if (liveStatus == "FETCHING_PLAYLIST" || liveStatus == "MERGING") {
+                                            LinearProgressIndicator(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(2.dp)),
+                                                color = if (liveStatus == "MERGING") Color(0xFF10B981) else accent,
+                                                trackColor = Color.White.copy(alpha = 0.1f)
+                                            )
+                                        } else {
+                                            LinearProgressIndicator(
+                                                progress = { progressFloat },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(2.dp)),
+                                                color = if (liveStatus == "PAUSED") Color(0xFFF59E0B) else accent,
+                                                trackColor = Color.White.copy(alpha = 0.1f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -383,7 +420,7 @@ fun LibraryScreen(
                                 horizontalArrangement = Arrangement.End,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (liveStatus == "DOWNLOADING") {
+                                if (liveStatus == "DOWNLOADING" || liveStatus == "FETCHING_PLAYLIST" || liveStatus == "MERGING") {
                                     CardActionButton(
                                         icon = Icons.Default.Pause,
                                         label = "Pause",

@@ -55,7 +55,7 @@ class CatalogViewModel(private val repository: MediaRepository) : ViewModel() {
     val uiState: StateFlow<CatalogUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
-    private val debounceDelayMs: Long = 350L
+    private val debounceDelayMs: Long = 2000L
     private var lastSearchedQuery: String = ""
 
     init {
@@ -101,7 +101,9 @@ class CatalogViewModel(private val repository: MediaRepository) : ViewModel() {
 
         searchJob = viewModelScope.launch {
             delay(debounceDelayMs)
-            executeSearch(trimmed)
+            if (trimmed != lastSearchedQuery) {
+                executeSearch(trimmed)
+            }
         }
     }
 
