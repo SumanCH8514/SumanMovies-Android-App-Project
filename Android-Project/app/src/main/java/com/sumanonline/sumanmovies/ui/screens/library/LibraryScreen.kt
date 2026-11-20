@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import org.json.JSONObject
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -76,8 +77,8 @@ import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 fun LibraryScreen(
     viewModel: LibraryViewModel,
     onMediaClick: (MediaItem) -> Unit,
-    onPlayDownload: (MediaItem, StreamSource) -> Unit = { _, _ -> },
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onPlayDownload: (MediaItem, StreamSource) -> Unit = { _, _ -> }
 ) {
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
@@ -414,79 +415,94 @@ fun LibraryScreen(
                                 }
                             }
 
+                            val providerName = extractDownloadProvider(dl.headersJson, dl.mediaId, dl.streamUrl)
+                            val formatType = extractDownloadFormat(dl.headersJson, dl.streamUrl, dl.localFilePath)
+
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (liveStatus == "DOWNLOADING" || liveStatus == "FETCHING_PLAYLIST" || liveStatus == "MERGING") {
-                                    CardActionButton(
-                                        icon = Icons.Default.Pause,
-                                        label = "Pause",
-                                        tint = accent,
-                                        onClick = { viewModel.pauseDownload(dl) }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    CardActionButton(
-                                        icon = Icons.Default.Delete,
-                                        label = "Delete",
-                                        tint = Color(0xFFEF4444),
-                                        onClick = { viewModel.deleteDownload(dl) }
-                                    )
-                                } else if (liveStatus == "PAUSED" || liveStatus == "FAILED") {
-                                    CardActionButton(
-                                        icon = Icons.Default.PlayArrow,
-                                        label = "Resume",
-                                        tint = accent,
-                                        onClick = { viewModel.resumeDownload(dl) }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    CardActionButton(
-                                        icon = Icons.Default.Delete,
-                                        label = "Delete",
-                                        tint = Color(0xFFEF4444),
-                                        onClick = { viewModel.deleteDownload(dl) }
-                                    )
-                                } else {
-                                    CardActionButton(
-                                        icon = Icons.Default.PlayArrow,
-                                        label = "Play",
-                                        tint = accent,
-                                        onClick = {
-                                            val playUrl = dl.localFilePath ?: dl.streamUrl
-                                            val item = MediaItem(
-                                                id = dl.mediaId,
-                                                title = dl.title,
-                                                posterUrl = dl.posterUrl,
-                                                mediaType = try { MediaType.valueOf(dl.mediaType) } catch (_: Exception) { MediaType.MOVIE }
-                                            )
-                                            val stream = StreamSource(
-                                                quality = dl.quality,
-                                                format = if (playUrl.contains(".mkv", ignoreCase = true)) "MKV" else "MP4",
-                                                url = playUrl,
-                                                label = dl.quality,
-                                                provider = "offline"
-                                            )
-                                            onPlayDownload(item, stream)
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    CardActionButton(
-                                        icon = Icons.AutoMirrored.Filled.OpenInNew,
-                                        label = "External",
-                                        tint = TextSecondary,
-                                        onClick = {
-                                            openWithExternalPlayer(context, dl.localFilePath)
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    CardActionButton(
-                                        icon = Icons.Default.Delete,
-                                        label = "Delete",
-                                        tint = Color(0xFFEF4444),
-                                        onClick = { viewModel.deleteDownload(dl) }
-                                    )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .padding(end = 8.dp)
+                                ) {
+                                    ProviderBadge(provider = providerName)
+                                    FormatBadge(format = formatType)
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (liveStatus == "DOWNLOADING" || liveStatus == "FETCHING_PLAYLIST" || liveStatus == "MERGING") {
+                                        CardActionButton(
+                                            icon = Icons.Default.Pause,
+                                            label = "Pause",
+                                            tint = accent,
+                                            onClick = { viewModel.pauseDownload(dl) }
+                                        )
+                                        CardActionButton(
+                                            icon = Icons.Default.Delete,
+                                            label = "Delete",
+                                            tint = Color(0xFFEF4444),
+                                            onClick = { viewModel.deleteDownload(dl) }
+                                        )
+                                    } else if (liveStatus == "PAUSED" || liveStatus == "FAILED") {
+                                        CardActionButton(
+                                            icon = Icons.Default.PlayArrow,
+                                            label = "Resume",
+                                            tint = accent,
+                                            onClick = { viewModel.resumeDownload(dl) }
+                                        )
+                                        CardActionButton(
+                                            icon = Icons.Default.Delete,
+                                            label = "Delete",
+                                            tint = Color(0xFFEF4444),
+                                            onClick = { viewModel.deleteDownload(dl) }
+                                        )
+                                    } else {
+                                        CardActionButton(
+                                            icon = Icons.Default.PlayArrow,
+                                            label = "Play",
+                                            tint = accent,
+                                            onClick = {
+                                                val playUrl = dl.localFilePath ?: dl.streamUrl
+                                                val item = MediaItem(
+                                                    id = dl.mediaId,
+                                                    title = dl.title,
+                                                    posterUrl = dl.posterUrl,
+                                                    mediaType = try { MediaType.valueOf(dl.mediaType) } catch (_: Exception) { MediaType.MOVIE }
+                                                )
+                                                val stream = StreamSource(
+                                                    quality = dl.quality,
+                                                    format = if (playUrl.contains(".mkv", ignoreCase = true)) "MKV" else "MP4",
+                                                    url = playUrl,
+                                                    label = dl.quality,
+                                                    provider = "offline"
+                                                )
+                                                onPlayDownload(item, stream)
+                                            }
+                                        )
+                                        CardActionButton(
+                                            icon = Icons.AutoMirrored.Filled.OpenInNew,
+                                            label = "External",
+                                            tint = TextSecondary,
+                                            onClick = {
+                                                openWithExternalPlayer(context, dl.localFilePath)
+                                            }
+                                        )
+                                        CardActionButton(
+                                            icon = Icons.Default.Delete,
+                                            label = "Delete",
+                                            tint = Color(0xFFEF4444),
+                                            onClick = { viewModel.deleteDownload(dl) }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -786,26 +802,163 @@ private fun CardActionButton(
         shape = RoundedCornerShape(8.dp),
         color = if (isDestructive) Color(0xFFEF4444).copy(alpha = 0.12f) else CardElevated,
         border = BorderStroke(0.5.dp, if (isDestructive) Color(0xFFEF4444).copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f)),
-        modifier = modifier.height(32.dp)
+        modifier = modifier.height(30.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = 9.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
                 tint = tint,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.dp)
             )
-            Spacer(modifier = Modifier.width(5.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = label,
                 color = tint,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
             )
         }
+    }
+}
+
+@Composable
+private fun ProviderBadge(
+    provider: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.height(30.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = CardElevated,
+        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 9.dp)
+        ) {
+            Text(
+                text = provider,
+                color = Color(0xFFCBD5E1),
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun FormatBadge(
+    format: String,
+    modifier: Modifier = Modifier
+) {
+    val upper = format.uppercase()
+    val (bgColor, textColor, borderColor) = when (upper) {
+        "HLS" -> Triple(Color(0xFF064E3B).copy(alpha = 0.4f), Color(0xFF34D399), Color(0xFF059669).copy(alpha = 0.5f))
+        "MKV" -> Triple(Color(0xFF4C1D95).copy(alpha = 0.4f), Color(0xFFA78BFA), Color(0xFF7C3AED).copy(alpha = 0.5f))
+        "MP4" -> Triple(Color(0xFF1E3A8A).copy(alpha = 0.4f), Color(0xFF60A5FA), Color(0xFF2563EB).copy(alpha = 0.5f))
+        "DASH" -> Triple(Color(0xFF78350F).copy(alpha = 0.4f), Color(0xFFFBBF24), Color(0xFFD97706).copy(alpha = 0.5f))
+        else -> Triple(CardElevated, Color(0xFFE2E8F0), Color.White.copy(alpha = 0.15f))
+    }
+    Surface(
+        modifier = modifier.height(30.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = bgColor,
+        border = BorderStroke(0.5.dp, borderColor)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        ) {
+            Text(
+                text = upper,
+                color = textColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+private fun extractDownloadProvider(headersJson: String?, mediaId: String, streamUrl: String): String {
+    if (!headersJson.isNullOrBlank()) {
+        try {
+            val json = JSONObject(headersJson)
+            val p = json.optString("__stream_provider", "").trim()
+            if (p.isNotBlank()) {
+                return normalizeProviderName(p)
+            }
+        } catch (_: Exception) {}
+    }
+
+    if (mediaId.contains(":")) {
+        val p = mediaId.substringBefore(":").trim()
+        if (p.isNotBlank() && !p.equals("tmdb", ignoreCase = true) && !p.equals("imdb", ignoreCase = true)) {
+            return normalizeProviderName(p)
+        }
+    }
+
+    val lowerUrl = streamUrl.lowercase()
+    return when {
+        lowerUrl.contains("play4u") || lowerUrl.contains("p4u") -> "Play4U"
+        lowerUrl.contains("4khdhub") || lowerUrl.contains("hubcloud") || lowerUrl.contains("streamwish") -> "4KHDHub"
+        lowerUrl.contains("hdhub4u") -> "HDHub4u"
+        lowerUrl.contains("dramachi") -> "Dramachi"
+        lowerUrl.contains("moviebox") || lowerUrl.contains("mbcdn") || lowerUrl.contains("fshvd") -> "MovieBox"
+        else -> "MovieBox"
+    }
+}
+
+private fun normalizeProviderName(raw: String): String {
+    val lower = raw.trim().lowercase()
+    return when {
+        lower == "moviebox" || lower.contains("moviebox") -> "MovieBox"
+        lower == "play4u" || lower.contains("play4u") -> "Play4U"
+        lower == "fourkhdhub" || lower == "4khdhub" || lower.contains("4khd") -> "4KHDHub"
+        lower == "hdhub4u" || lower.contains("hdhub") -> "HDHub4u"
+        lower == "dramachi" || lower.contains("dramachi") -> "Dramachi"
+        lower == "tv" -> "Live TV"
+        lower == "offline" -> "Offline"
+        else -> raw.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+}
+
+private fun extractDownloadFormat(headersJson: String?, streamUrl: String, localFilePath: String?): String {
+    val lowerUrl = streamUrl.lowercase()
+    val lowerPath = localFilePath?.lowercase() ?: ""
+
+    if (!headersJson.isNullOrBlank()) {
+        try {
+            val json = JSONObject(headersJson)
+            val f = json.optString("__stream_format", "").trim()
+            if (f.isNotBlank()) {
+                val upper = f.uppercase()
+                return when {
+                    upper.contains("MKV") -> "MKV"
+                    upper.contains("HLS") || upper.contains("M3U8") -> "HLS"
+                    upper.contains("DASH") || upper.contains("MPD") -> "DASH"
+                    upper.contains("MP4") -> "MP4"
+                    upper.contains("DIRECT") -> if (lowerPath.endsWith(".mkv") || lowerUrl.contains(".mkv")) "MKV" else "MP4"
+                    else -> upper
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    return when {
+        lowerUrl.contains(".m3u8") || lowerUrl.contains("/hls/") -> "HLS"
+        lowerUrl.contains(".mpd") || lowerUrl.contains("/dash/") -> "DASH"
+        lowerPath.endsWith(".mkv") || lowerUrl.contains(".mkv") -> "MKV"
+        lowerPath.endsWith(".mp4") || lowerUrl.contains(".mp4") -> "MP4"
+        else -> "MP4"
     }
 }
 

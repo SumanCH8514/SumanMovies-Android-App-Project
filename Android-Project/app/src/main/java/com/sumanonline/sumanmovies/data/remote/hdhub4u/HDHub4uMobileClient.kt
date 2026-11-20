@@ -1301,8 +1301,7 @@ class HDHub4uMobileClient {
             format = if (isMkv) "MKV" else "MP4",
             url = firstDirect.replace("&amp;", "&"),
             headers = mapOf(
-                "User-Agent" to mobileUserAgent,
-                "Referer" to primaryBaseUrl
+                "User-Agent" to mobileUserAgent
             ),
             directFile = true,
             codec = if (quality.contains("4K") || firstDirect.contains("hevc", ignoreCase = true)) "HEVC" else "H.264",

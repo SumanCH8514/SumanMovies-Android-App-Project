@@ -131,6 +131,7 @@ fun AppNavigation(
                 putExtra("EXTRA_STREAM_QUALITY", stream.quality)
                 putExtra("EXTRA_STREAM_PROVIDER", stream.provider)
                 putExtra("EXTRA_STREAM_DIRECT", stream.directFile)
+                putExtra("EXTRA_STREAM_IS_LOCKER", stream.isLockerUrl)
                 if (stream.headers.isNotEmpty()) {
                     putExtra("EXTRA_STREAM_HEADERS", HashMap(stream.headers))
                 }

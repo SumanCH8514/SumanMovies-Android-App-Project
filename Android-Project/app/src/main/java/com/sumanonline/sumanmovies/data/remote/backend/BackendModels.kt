@@ -60,7 +60,8 @@ data class BackendReleaseStreamDto(
     val sizeBytes: Long?,
     val directFile: Boolean,
     val codec: String?,
-    val label: String
+    val label: String,
+    val audioLangs: String? = null
 )
 
 data class BackendSubtitleDto(

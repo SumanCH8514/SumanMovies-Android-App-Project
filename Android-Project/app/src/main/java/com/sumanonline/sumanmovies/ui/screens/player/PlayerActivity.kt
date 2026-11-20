@@ -46,6 +46,7 @@ class PlayerActivity : ComponentActivity() {
         val streamQuality = intent.getStringExtra("EXTRA_STREAM_QUALITY")
         val streamProvider = intent.getStringExtra("EXTRA_STREAM_PROVIDER")
         val streamDirect = intent.getBooleanExtra("EXTRA_STREAM_DIRECT", false)
+        val streamIsLocker = intent.getBooleanExtra("EXTRA_STREAM_IS_LOCKER", false)
         val serverName = intent.getStringExtra("EXTRA_SERVER_NAME")
         val serverDisplayName = intent.getStringExtra("EXTRA_SERVER_DISPLAY_NAME")
 
@@ -105,6 +106,7 @@ class PlayerActivity : ComponentActivity() {
             initialQuality = streamQuality,
             initialProvider = streamProvider,
             initialDirect = streamDirect,
+            initialIsLocker = streamIsLocker,
             initialHeaders = streamHeaders,
             serverName = serverName,
             serverDisplayName = serverDisplayName,

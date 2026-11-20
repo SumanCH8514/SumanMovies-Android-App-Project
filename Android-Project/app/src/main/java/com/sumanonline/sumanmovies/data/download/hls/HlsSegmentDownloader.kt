@@ -191,7 +191,8 @@ class HlsSegmentDownloader(
         headers.forEach { (k, v) ->
             if (!k.equals("Host", ignoreCase = true) &&
                 !k.equals("Range", ignoreCase = true) &&
-                !k.equals("User-Agent", ignoreCase = true)
+                !k.equals("User-Agent", ignoreCase = true) &&
+                !k.startsWith("__")
             ) {
                 reqBuilder.header(k, v)
             }

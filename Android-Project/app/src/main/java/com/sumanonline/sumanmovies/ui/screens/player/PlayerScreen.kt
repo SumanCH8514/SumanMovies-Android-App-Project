@@ -58,6 +58,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.sumanonline.sumanmovies.data.models.MediaType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -511,7 +512,13 @@ fun PlayerScreenClassic(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            items(StreamingServer.entries) { server ->
+                            val isAnime = uiState.mediaType == MediaType.ANIME ||
+                                uiState.selectedServer == StreamingServer.REANIME ||
+                                uiState.drawerSelectedServer == StreamingServer.REANIME ||
+                                uiState.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
+                                uiState.mediaId.startsWith("reanime:") ||
+                                com.sumanonline.sumanmovies.data.models.isAnimeCandidate(uiState.mediaTitle, uiState.mediaType, null, uiState.mediaId)
+                            items(StreamingServer.getAvailableServers(isAnime, uiState.serverStreamsMap.containsKey(StreamingServer.REANIME))) { server ->
                                 val isCurrent = (uiState.selectedServer == server)
                                 Box(
                                     modifier = Modifier

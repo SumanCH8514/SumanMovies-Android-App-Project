@@ -32,9 +32,9 @@ object MediaMatcher {
     fun normalizeForMatching(text: String): String {
         return text.lowercase()
             .replace(Regex("""\s*\(\d{4}\)"""), "")
-            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
             .replace(Regex("""(?i)\(season\s*\d+\)"""), " ")
             .replace(Regex("""(?i)\[season\s*\d+\]"""), " ")
             .replace(Regex("""(?i)\bseason\s*\d+\s*[-–]\s*\d+\b"""), " ")
@@ -52,9 +52,9 @@ object MediaMatcher {
     fun buildSearchQueries(title: String): List<String> {
         val cleanFull = title
             .replace(Regex("""\s*\(\d{4}\)"""), "")
-            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
             .trim()
 
         val noPunctuation = cleanFull
@@ -120,7 +120,7 @@ object MediaMatcher {
         var score = 0
 
         if (normTarget == normCandidate) {
-            score += 1000
+            score += 2500
         } else {
             val commonTokens = targetTokens.intersect(candidateTokens)
             val missingFromCandidate = targetTokens - candidateTokens

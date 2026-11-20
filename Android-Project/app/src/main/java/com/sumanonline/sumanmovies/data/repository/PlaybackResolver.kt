@@ -10,18 +10,22 @@ import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
+import com.sumanonline.sumanmovies.data.remote.reanime.ReAnimeMobileClient
 import com.sumanonline.sumanmovies.util.MediaMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class PlaybackResolver(
     private val backendRepo: BackendRepository,
     private val movieBoxClient: MovieBoxMobileClient,
     private val fourKHdHubClient: FourKHdHubMobileClient = FourKHdHubMobileClient(),
     private val hdHub4uClient: HDHub4uMobileClient = HDHub4uMobileClient(),
-    private val play4UClient: Play4UMobileClient = Play4UMobileClient()
+    private val play4UClient: Play4UMobileClient = Play4UMobileClient(),
+    private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient()
 ) {
     private val serverCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ServerState>>()
     private val cacheTtlMs = 15 * 60 * 1000L
@@ -70,6 +74,7 @@ class PlaybackResolver(
                     StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId, releaseYear)
                     StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId, releaseYear)
                     StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId, releaseYear)
+                    StreamingServer.REANIME -> resolveReAnime(title, season, episode, providerId, releaseYear)
                 }
 
                 val validStreams = rawStreams.filter { validateStreamSource(it) }
@@ -469,6 +474,68 @@ class PlaybackResolver(
         if (match != null) {
             val cleanId = match.id.removePrefix("dramachi:")
             return backendRepo.getStreams("dramachi", cleanId, season, episode)
+        }
+
+        return Pair(emptyList(), emptyList())
+    }
+
+    private suspend fun resolveReAnime(
+        title: String,
+        season: Int,
+        episode: Int,
+        providerId: String?,
+        releaseYear: String? = null
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        if (providerId?.startsWith("reanime:") == true) {
+            val cleanId = providerId.removePrefix("reanime:").trim()
+            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, title, releaseYear)
+            if (directStreams.first.isNotEmpty()) {
+                return directStreams
+            }
+        }
+
+        val cleanAnimeTitle = title
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+            .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(\d{4}\)"""), "")
+            .replace("é", "e")
+            .replace("É", "E")
+            .trim()
+
+        val resolvedAniListId = reAnimeClient.resolveAniListId(cleanAnimeTitle, releaseYear)?.toString()
+        if (!resolvedAniListId.isNullOrBlank()) {
+            val aniStreams = reAnimeClient.resolveStreams(resolvedAniListId, season, episode, cleanAnimeTitle, releaseYear)
+            if (aniStreams.first.isNotEmpty()) {
+                return aniStreams
+            }
+        }
+
+        val queries = MediaMatcher.buildSearchQueries(cleanAnimeTitle.ifBlank { title })
+        val localResults = mutableListOf<com.sumanonline.sumanmovies.data.models.MediaItem>()
+        for (q in queries) {
+            val results = reAnimeClient.search(q)
+            if (results.isNotEmpty()) {
+                localResults.addAll(results)
+                break
+            }
+        }
+
+        val match = MediaMatcher.findBestMatch(
+            localResults,
+            targetTitle = cleanAnimeTitle.ifBlank { title },
+            targetYear = releaseYear,
+            season = season,
+            isSeries = season > 0
+        )
+
+        if (match != null) {
+            val cleanId = match.id.removePrefix("reanime:").trim()
+            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, cleanAnimeTitle, releaseYear)
+            if (directStreams.first.isNotEmpty()) {
+                return directStreams
+            }
         }
 
         return Pair(emptyList(), emptyList())

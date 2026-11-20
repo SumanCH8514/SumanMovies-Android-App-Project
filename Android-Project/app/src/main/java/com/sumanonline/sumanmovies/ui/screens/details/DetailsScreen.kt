@@ -451,11 +451,17 @@ fun DetailsScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        val isAnime = state.details?.mediaType == MediaType.ANIME ||
+                            state.details?.genres?.any { it.contains("Anime", ignoreCase = true) || it.contains("Animation", ignoreCase = true) } == true ||
+                            state.details?.id?.startsWith("reanime:") == true ||
+                            com.sumanonline.sumanmovies.data.models.isAnimeCandidate(state.details?.title.orEmpty(), state.details?.mediaType, state.details?.genres, state.details?.id)
+                        val availableServers = StreamingServer.getAvailableServers(isAnime)
+
                         LazyRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            items(StreamingServer.entries) { server ->
+                            items(availableServers) { server ->
                                 val serverState = state.serverStates[server]
                                 val isSelected = (state.selectedServer == server)
                                 ServerCard(
@@ -1348,8 +1354,8 @@ private fun QualitySelectionBottomSheet(
 
     val expandedCategories = remember(groupedStreams) {
         mutableStateMapOf<String, Boolean>().apply {
-            groupedStreams.forEachIndexed { index, (cat, _) ->
-                put(cat, index == 0)
+            groupedStreams.forEach { (cat, _) ->
+                put(cat, true)
             }
         }
     }
@@ -2045,13 +2051,27 @@ private fun DownloadFullScreenModal(
         }
     }
 
-    val downloadProviders = remember {
-        listOf(
-            StreamingServer.FOURKHDHUB,
-            StreamingServer.HDHUB4U,
-            StreamingServer.PLAY4U,
-            StreamingServer.MOVIEBOX
-        )
+    val isAnimeDownload = details.mediaType == MediaType.ANIME ||
+        details.genres.any { it.equals("Anime", ignoreCase = true) || it.equals("Animation", ignoreCase = true) } ||
+        details.id.startsWith("reanime:")
+
+    val downloadProviders = remember(details) {
+        if (isAnimeDownload) {
+            listOf(
+                StreamingServer.FOURKHDHUB,
+                StreamingServer.HDHUB4U,
+                StreamingServer.PLAY4U,
+                StreamingServer.MOVIEBOX,
+                StreamingServer.REANIME
+            )
+        } else {
+            listOf(
+                StreamingServer.FOURKHDHUB,
+                StreamingServer.HDHUB4U,
+                StreamingServer.PLAY4U,
+                StreamingServer.MOVIEBOX
+            )
+        }
     }
 
     val releaseYear = details.releaseDate?.take(4) ?: details.year
@@ -2194,6 +2214,7 @@ private fun DownloadFullScreenModal(
                             StreamingServer.HDHUB4U -> "HDHub4U"
                             StreamingServer.FOURKHDHUB -> "4KHub4U"
                             StreamingServer.DRAMACHI -> "Dramachi"
+                            StreamingServer.REANIME -> "ReAnime"
                         }
 
                         Box(

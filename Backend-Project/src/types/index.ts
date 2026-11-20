@@ -42,6 +42,7 @@ export interface ReleaseStream {
   directFile: boolean;
   codec?: string;
   label?: string;
+  audioLangs?: string;
 }
 
 export interface SubtitleOption {

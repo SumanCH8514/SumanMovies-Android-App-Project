@@ -258,9 +258,11 @@ class MediaRepository(
         season: Int = 1,
         episode: Int = 1,
         providerId: String? = null,
-        releaseYear: String? = null
+        releaseYear: String? = null,
+        isAnime: Boolean = false
     ): Map<StreamingServer, ServerState> = coroutineScope {
-        val servers = StreamingServer.entries
+        val effectiveIsAnime = isAnime || com.sumanonline.sumanmovies.data.models.isAnimeCandidate(title, null, null, providerId)
+        val servers = StreamingServer.getAvailableServers(effectiveIsAnime)
         val deferreds = servers.associateWith { server ->
             async { resolveServer(server, title, season, episode, providerId, releaseYear) }
         }

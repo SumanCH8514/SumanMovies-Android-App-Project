@@ -97,6 +97,7 @@ fun DownloadFullScreenModal(
     pageTitle: String,
     streams: List<StreamSource>,
     isLoading: Boolean,
+    isAnime: Boolean = false,
     resolvingStreamUrl: String? = null,
     onSelectServer: (StreamingServer) -> Unit,
     onDismiss: () -> Unit,
@@ -139,13 +140,23 @@ fun DownloadFullScreenModal(
         }
     }
 
-    val downloadProviders = remember {
-        listOf(
-            StreamingServer.FOURKHDHUB,
-            StreamingServer.HDHUB4U,
-            StreamingServer.PLAY4U,
-            StreamingServer.MOVIEBOX
-        )
+    val downloadProviders = remember(isAnime) {
+        if (isAnime) {
+            listOf(
+                StreamingServer.FOURKHDHUB,
+                StreamingServer.HDHUB4U,
+                StreamingServer.PLAY4U,
+                StreamingServer.MOVIEBOX,
+                StreamingServer.REANIME
+            )
+        } else {
+            listOf(
+                StreamingServer.FOURKHDHUB,
+                StreamingServer.HDHUB4U,
+                StreamingServer.PLAY4U,
+                StreamingServer.MOVIEBOX
+            )
+        }
     }
 
     val activeProviderLabel = when (server) {
@@ -170,7 +181,6 @@ fun DownloadFullScreenModal(
                     .statusBarsPadding()
                     .navigationBarsPadding()
             ) {
-                // Header
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -224,7 +234,6 @@ fun DownloadFullScreenModal(
                     }
                 }
 
-                // Title
                 Text(
                     text = pageTitle,
                     color = Color.White,
@@ -237,7 +246,6 @@ fun DownloadFullScreenModal(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Select Provider
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -272,7 +280,6 @@ fun DownloadFullScreenModal(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Provider Tabs
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 20.dp),
@@ -286,6 +293,7 @@ fun DownloadFullScreenModal(
                             StreamingServer.HDHUB4U -> "HDHub4U"
                             StreamingServer.FOURKHDHUB -> "4KHub4U"
                             StreamingServer.DRAMACHI -> "Dramachi"
+                            StreamingServer.REANIME -> "ReAnime"
                         }
 
                         Box(
@@ -307,7 +315,6 @@ fun DownloadFullScreenModal(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Categories Header
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -340,7 +347,6 @@ fun DownloadFullScreenModal(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Content
                 if (isLoading) {
                     Column(
                         modifier = Modifier

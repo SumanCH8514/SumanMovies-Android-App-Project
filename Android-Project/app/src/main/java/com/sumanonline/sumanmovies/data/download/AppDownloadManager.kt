@@ -384,7 +384,7 @@ class AppDownloadManager(
 
         activeJobs[entityId]?.cancel()
         val job = downloadScope.launch {
-            runDownloadLoop(downloadEntity, targetFile, stream.headers)
+            runDownloadLoop(downloadEntity, targetFile, enrichedHeaders)
         }
         activeJobs[entityId] = job
 
@@ -414,7 +414,15 @@ class AppDownloadManager(
             val dir = getMediaDownloadDir(entity.mediaType, entity.title, null)
             File(dir, "${entity.id}.mp4")
         }
-        val headers = deserializeHeaders(entity.headersJson)
+        val headers = deserializeHeaders(entity.headersJson).toMutableMap()
+        val isMovieBoxStream = entity.streamUrl.contains("aoneroom.com", ignoreCase = true) ||
+                entity.streamUrl.contains("inmoviebox.com", ignoreCase = true) ||
+                entity.streamUrl.contains("wefeed", ignoreCase = true) ||
+                entity.quality.contains("HLS", ignoreCase = true)
+        if (isMovieBoxStream) {
+            headers["__stream_format"] = "HLS"
+            headers["__stream_provider"] = "moviebox"
+        }
 
         val initialProgress = DownloadProgress(
             id = id,
@@ -536,12 +544,23 @@ class AppDownloadManager(
         try {
             var currentUrl = entity.streamUrl
             var currentHeaders = headers.toMutableMap()
+            if (!currentHeaders.containsKey("__stream_format") && !entity.headersJson.isNullOrBlank()) {
+                val stored = deserializeHeaders(entity.headersJson)
+                currentHeaders.putAll(stored)
+            }
             val formatMeta = currentHeaders["__stream_format"] ?: ""
+            val providerMeta = currentHeaders["__stream_provider"] ?: ""
+
+            val isMovieBox = providerMeta.equals("moviebox", ignoreCase = true) ||
+                    currentUrl.contains("aoneroom.com", ignoreCase = true) ||
+                    currentUrl.contains("inmoviebox.com", ignoreCase = true) ||
+                    currentUrl.contains("wefeed", ignoreCase = true)
 
             val isPreHls = formatMeta.equals("HLS", ignoreCase = true) ||
                     HlsPlaylistParser.isHlsUrl(currentUrl) ||
                     currentUrl.contains(".m3u8", ignoreCase = true) ||
-                    entity.quality.contains("HLS", ignoreCase = true)
+                    entity.quality.contains("HLS", ignoreCase = true) ||
+                    (isMovieBox && !currentUrl.contains(".mp4", ignoreCase = true) && !currentUrl.contains(".mkv", ignoreCase = true))
 
             if (isPreHls) {
                 runHlsDownload(entity, targetFile, currentUrl, currentHeaders)
@@ -567,6 +586,9 @@ class AppDownloadManager(
                     currentHeaders.putAll(refreshed.headers)
                     if (refreshed.format.isNotBlank()) {
                         currentHeaders["__stream_format"] = refreshed.format
+                    }
+                    if (refreshed.provider.isNotBlank()) {
+                        currentHeaders["__stream_provider"] = refreshed.provider
                     }
                     val updatedEntity = entity.copy(
                         streamUrl = currentUrl,
@@ -598,8 +620,8 @@ class AppDownloadManager(
                     contentType.contains("application/vnd.apple.mpegurl")
 
             val isHlsByBody = try {
-                val peek = resp.peekBody(1024).string()
-                peek.trimStart().startsWith("#EXTM3U")
+                val peek = resp.peekBody(2048).string().trim().removePrefix("\uFEFF")
+                peek.startsWith("#EXTM3U") || peek.contains("#EXT-X-STREAM-INF") || peek.contains("#EXT-X-TARGETDURATION")
             } catch (_: Exception) {
                 false
             }
@@ -702,6 +724,18 @@ class AppDownloadManager(
             }
 
             if (tempFile.exists() && tempFile.length() > 0) {
+                if (isFileM3u8OrHtml(tempFile)) {
+                    val fileContent = try { tempFile.readText() } catch (_: Exception) { "" }
+                    if (fileContent.trim().removePrefix("\uFEFF").startsWith("#EXTM3U")) {
+                        try { tempFile.delete() } catch (_: Exception) {}
+                        runHlsDownload(entity, targetFile, currentUrl, currentHeaders)
+                        return@withContext
+                    } else {
+                        try { tempFile.delete() } catch (_: Exception) {}
+                        throw IllegalStateException("Downloaded stream was text/HTML rather than valid media")
+                    }
+                }
+
                 targetFile.delete()
                 val renamed = tempFile.renameTo(targetFile)
                 val finalFile = if (renamed) targetFile else tempFile
@@ -755,7 +789,21 @@ class AppDownloadManager(
             val allDownloads = downloadDao.getAllDownloadsList()
             for (dl in allDownloads) {
                 if (dl.status == "COMPLETED") {
-                    val file = dl.localFilePath?.let { File(it) }
+                    var file = dl.localFilePath?.let { File(it) }
+                    if ((file == null || !file.exists() || file.length() < 100_000L) && dl.localFilePath != null) {
+                        val altExtPath = if (dl.localFilePath.endsWith(".mp4", ignoreCase = true)) {
+                            dl.localFilePath.removeSuffix(".mp4") + ".mkv"
+                        } else if (dl.localFilePath.endsWith(".mkv", ignoreCase = true)) {
+                            dl.localFilePath.removeSuffix(".mkv") + ".mp4"
+                        } else null
+                        if (altExtPath != null) {
+                            val altFile = File(altExtPath)
+                            if (altFile.exists() && altFile.length() >= 100_000L && !isFileM3u8OrHtml(altFile)) {
+                                file = altFile
+                                downloadDao.updateProgressById(dl.id, "COMPLETED", altFile.length(), altFile.length(), altFile.absolutePath)
+                            }
+                        }
+                    }
                     val isCorrupt = file == null || !file.exists() || file.length() < 100_000L || isFileM3u8OrHtml(file)
                     if (isCorrupt) {
                         try { file?.delete() } catch (_: Exception) {}
@@ -861,25 +909,50 @@ class AppDownloadManager(
                 .trim()
 
             val isSeries = entity.mediaType.equals("SERIES", ignoreCase = true) || entity.seasonNumber > 0
+            val entityHeaders = deserializeHeaders(entity.headersJson)
+            val providerName = entityHeaders["__stream_provider"] ?: ""
+            val targetServer = when {
+                providerName.contains("4khdhub", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.FOURKHDHUB
+                providerName.contains("hdhub4u", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.HDHUB4U
+                providerName.contains("play4u", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.PLAY4U
+                providerName.contains("dramachi", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.DRAMACHI
+                providerName.contains("reanime", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.REANIME
+                else -> com.sumanonline.sumanmovies.data.models.StreamingServer.MOVIEBOX
+            }
 
             val resolved = app.playbackResolver.resolveServer(
-                server = com.sumanonline.sumanmovies.data.models.StreamingServer.MOVIEBOX,
+                server = targetServer,
                 title = cleanTitle,
                 season = if (isSeries) entity.seasonNumber else 0,
                 episode = if (isSeries) entity.episodeNumber else 0,
-                providerId = entity.mediaId
+                providerId = entity.mediaId,
+                forceRefresh = true
             )
 
             val freshStreams = resolved.streams
             if (freshStreams.isNotEmpty()) {
-                val matched = freshStreams.firstOrNull {
-                    (it.directFile || it.format.equals("MP4", ignoreCase = true)) &&
-                            it.quality.contains(entity.quality.take(4), ignoreCase = true)
-                } ?: freshStreams.firstOrNull {
-                    it.directFile || it.format.equals("MP4", ignoreCase = true)
-                } ?: freshStreams.firstOrNull {
-                    it.quality.contains(entity.quality.take(4), ignoreCase = true)
-                } ?: freshStreams.firstOrNull()
+                val wantFormat = entityHeaders["__stream_format"] ?: ""
+                val isHlsPreferred = wantFormat.equals("HLS", ignoreCase = true) ||
+                        entity.quality.contains("HLS", ignoreCase = true) ||
+                        entity.streamUrl.contains("aoneroom.com", ignoreCase = true) ||
+                        entity.streamUrl.contains("inmoviebox.com", ignoreCase = true) ||
+                        entity.streamUrl.contains("wefeed", ignoreCase = true)
+
+                val matched = if (isHlsPreferred) {
+                    freshStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) && it.quality.contains(entity.quality.take(4), ignoreCase = true) }
+                        ?: freshStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) }
+                        ?: freshStreams.firstOrNull { it.quality.contains(entity.quality.take(4), ignoreCase = true) }
+                        ?: freshStreams.firstOrNull()
+                } else {
+                    freshStreams.firstOrNull {
+                        (it.directFile || it.format.equals("MP4", ignoreCase = true)) &&
+                                it.quality.contains(entity.quality.take(4), ignoreCase = true)
+                    } ?: freshStreams.firstOrNull {
+                        it.directFile || it.format.equals("MP4", ignoreCase = true)
+                    } ?: freshStreams.firstOrNull {
+                        it.quality.contains(entity.quality.take(4), ignoreCase = true)
+                    } ?: freshStreams.firstOrNull()
+                }
 
                 return@withContext matched
             }
@@ -900,7 +973,8 @@ class AppDownloadManager(
         hdrs.forEach { (k, v) ->
             if (!k.equals("Host", ignoreCase = true) &&
                 !k.equals("Range", ignoreCase = true) &&
-                !k.equals("User-Agent", ignoreCase = true)
+                !k.equals("User-Agent", ignoreCase = true) &&
+                !k.startsWith("__")
             ) {
                 reqBuilder.header(k, v)
             }
@@ -955,12 +1029,34 @@ class AppDownloadManager(
 
             var content: String
             var resolvedMediaPlaylistUrl = manifestUrl
+            var currentHeaders = headers.toMutableMap()
 
-            val manifestReq = buildRequest(manifestUrl, headers, 0L)
-            val manifestResp = httpClient.newCall(manifestReq).execute()
-            if (!manifestResp.isSuccessful) {
+            var manifestReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
+            var manifestResp = httpClient.newCall(manifestReq).execute()
+
+            if (!manifestResp.isSuccessful && (manifestResp.code in listOf(401, 403, 404, 410))) {
                 manifestResp.close()
-                throw IllegalStateException("Failed to fetch HLS manifest (HTTP ${manifestResp.code})")
+                val refreshed = refreshStreamSource(entity)
+                if (refreshed != null && refreshed.url.isNotBlank()) {
+                    resolvedMediaPlaylistUrl = refreshed.url
+                    currentHeaders.clear()
+                    currentHeaders.putAll(refreshed.headers)
+                    if (refreshed.format.isNotBlank()) currentHeaders["__stream_format"] = refreshed.format
+                    if (refreshed.provider.isNotBlank()) currentHeaders["__stream_provider"] = refreshed.provider
+                    val updatedEntity = entity.copy(
+                        streamUrl = resolvedMediaPlaylistUrl,
+                        headersJson = serializeHeaders(currentHeaders)
+                    )
+                    downloadDao.insert(updatedEntity)
+                    manifestReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
+                    manifestResp = httpClient.newCall(manifestReq).execute()
+                }
+            }
+
+            if (!manifestResp.isSuccessful) {
+                val code = manifestResp.code
+                manifestResp.close()
+                throw IllegalStateException("Failed to fetch HLS manifest (HTTP $code)")
             }
             resolvedMediaPlaylistUrl = manifestResp.request.url.toString()
             content = manifestResp.body?.string() ?: throw IllegalStateException("Empty HLS manifest response")
@@ -981,11 +1077,31 @@ class AppDownloadManager(
                 } ?: master.variants.first()
 
                 resolvedMediaPlaylistUrl = matchedVariant.url
-                val mediaReq = buildRequest(resolvedMediaPlaylistUrl, headers, 0L)
-                val mediaResp = httpClient.newCall(mediaReq).execute()
-                if (!mediaResp.isSuccessful) {
+                var mediaReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
+                var mediaResp = httpClient.newCall(mediaReq).execute()
+
+                if (!mediaResp.isSuccessful && (mediaResp.code in listOf(401, 403, 404, 410))) {
                     mediaResp.close()
-                    throw IllegalStateException("Failed to fetch media playlist from variant (HTTP ${mediaResp.code})")
+                    val refreshed = refreshStreamSource(entity)
+                    if (refreshed != null && refreshed.url.isNotBlank()) {
+                        currentHeaders.clear()
+                        currentHeaders.putAll(refreshed.headers)
+                        if (refreshed.format.isNotBlank()) currentHeaders["__stream_format"] = refreshed.format
+                        if (refreshed.provider.isNotBlank()) currentHeaders["__stream_provider"] = refreshed.provider
+                        val updatedEntity = entity.copy(
+                            streamUrl = refreshed.url,
+                            headersJson = serializeHeaders(currentHeaders)
+                        )
+                        downloadDao.insert(updatedEntity)
+                        mediaReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
+                        mediaResp = httpClient.newCall(mediaReq).execute()
+                    }
+                }
+
+                if (!mediaResp.isSuccessful) {
+                    val code = mediaResp.code
+                    mediaResp.close()
+                    throw IllegalStateException("Failed to fetch media playlist from variant (HTTP $code)")
                 }
                 resolvedMediaPlaylistUrl = mediaResp.request.url.toString()
                 content = mediaResp.body?.string() ?: throw IllegalStateException("Empty media playlist response")
@@ -1002,7 +1118,7 @@ class AppDownloadManager(
             val downloader = HlsSegmentDownloader(httpClient = httpClient, concurrency = 4)
             val downloadedSegments = downloader.downloadSegments(
                 playlist = mediaPlaylist,
-                headers = headers,
+                headers = currentHeaders,
                 tempDir = tempDir
             ) { downloadedBytes, totalEstimatedBytes, downloadedSegs, totalSegs, speedBytesPerSec ->
                 val progress = DownloadProgress(

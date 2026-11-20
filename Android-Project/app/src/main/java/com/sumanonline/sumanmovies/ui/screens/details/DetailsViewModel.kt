@@ -114,7 +114,7 @@ class DetailsViewModel(
             retryServer(server)
         }
 
-        if (openModalIfSupported && (server == StreamingServer.FOURKHDHUB || server == StreamingServer.HDHUB4U || server == StreamingServer.MOVIEBOX)) {
+        if (openModalIfSupported && (server == StreamingServer.FOURKHDHUB || server == StreamingServer.HDHUB4U || server == StreamingServer.MOVIEBOX || server == StreamingServer.REANIME)) {
             openQualityModal(server)
         }
     }
@@ -600,7 +600,13 @@ class DetailsViewModel(
             val yr = _uiState.value.details?.year ?: _uiState.value.details?.releaseDate?.take(4)
 
             val currentServer = _uiState.value.selectedServer
-            val allServers = StreamingServer.entries
+            val details = _uiState.value.details
+            val isAnime = details?.mediaType == MediaType.ANIME ||
+                    mediaType == MediaType.ANIME ||
+                    details?.genres?.any { it.contains("Anime", ignoreCase = true) || it.contains("Animation", ignoreCase = true) } == true ||
+                    mediaId.startsWith("reanime:") ||
+                    com.sumanonline.sumanmovies.data.models.isAnimeCandidate(title, mediaType, details?.genres, mediaId)
+            val allServers = StreamingServer.getAvailableServers(isAnime)
 
             val initialStates = _uiState.value.serverStates.toMutableMap()
             allServers.forEach { srv ->
@@ -674,7 +680,8 @@ class DetailsViewModel(
                 backdropUrl = d.backdropUrl,
                 mediaType = d.mediaType
             )
-            if (stream.isLockerUrl) {
+            val isLocker = stream.isLockerUrl || repository.isLockerUrl(stream.url)
+            if (isLocker) {
                 viewModelScope.launch {
                     val resolved = repository.resolveLockerUrl(stream.url)
                     val finalStream = if (resolved != null && resolved.url.isNotBlank()) {
@@ -733,7 +740,8 @@ class DetailsViewModel(
                     backdropUrl = d.backdropUrl,
                     mediaType = d.mediaType
                 )
-                if (stream.isLockerUrl) {
+                val isLocker = stream.isLockerUrl || repository.isLockerUrl(stream.url)
+                if (isLocker) {
                     _uiState.value = _uiState.value.copy(resolvingStreamUrl = stream.url)
                     val resolved = repository.resolveLockerUrl(stream.url)
                     _uiState.value = _uiState.value.copy(resolvingStreamUrl = null)

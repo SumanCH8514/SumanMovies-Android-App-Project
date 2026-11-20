@@ -87,6 +87,9 @@ object MediaRemuxer {
                     copyFile(concatenatedFile, fallbackFile)
                     concatenatedFile.delete()
                 }
+                if (targetFile.exists() && targetFile != fallbackFile) {
+                    try { targetFile.delete() } catch (_: Exception) {}
+                }
                 finalProducedFile = fallbackFile
             } else {
                 concatenatedFile.delete()
@@ -149,7 +152,15 @@ object MediaRemuxer {
                         bufferInfo.offset = 0
                         bufferInfo.size = sampleSize
                         bufferInfo.presentationTimeUs = extractor.sampleTime
-                        bufferInfo.flags = extractor.sampleFlags
+                        val sampleFlags = extractor.sampleFlags
+                        var bufferFlags = 0
+                        if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                            bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_KEY_FRAME
+                        }
+                        if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) != 0) {
+                            bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_PARTIAL_FRAME
+                        }
+                        bufferInfo.flags = bufferFlags
                         muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
                     }
                 }

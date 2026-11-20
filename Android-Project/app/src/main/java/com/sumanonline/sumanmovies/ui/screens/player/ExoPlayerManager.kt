@@ -1,6 +1,7 @@
 package com.sumanonline.sumanmovies.ui.screens.player
 
 import android.content.Context
+import android.os.Handler
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -12,13 +13,18 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.extractor.DefaultExtractorsFactory
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.StreamSource
@@ -27,6 +33,7 @@ import com.sumanonline.sumanmovies.util.DeviceCapabilities
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.ArrayList
 
 data class PlayerPlaybackState(
     val isPlaying: Boolean = false,
@@ -84,25 +91,61 @@ class ExoPlayerManager(private val context: Context) {
 
     fun getPlayer(): ExoPlayer {
         if (exoPlayer == null) {
-            val renderersFactory = DefaultRenderersFactory(context).apply {
-                setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            val renderersFactory = object : DefaultRenderersFactory(context) {
+                override fun buildVideoRenderers(
+                    context: Context,
+                    extensionRendererMode: Int,
+                    mediaCodecSelector: MediaCodecSelector,
+                    enableDecoderFallback: Boolean,
+                    eventHandler: Handler,
+                    eventListener: VideoRendererEventListener,
+                    allowedVideoJoiningTimeMs: Long,
+                    out: ArrayList<Renderer>
+                ) {
+                    super.buildVideoRenderers(
+                        context,
+                        extensionRendererMode,
+                        mediaCodecSelector,
+                        enableDecoderFallback,
+                        eventHandler,
+                        eventListener,
+                        allowedVideoJoiningTimeMs,
+                        out
+                    )
+                    try {
+                        if (FfmpegLibrary.isAvailable()) {
+                            out.add(
+                                ExperimentalFfmpegVideoRenderer(
+                                    allowedVideoJoiningTimeMs,
+                                    eventHandler,
+                                    eventListener,
+                                    50
+                                )
+                            )
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }.apply {
+                setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                 setEnableDecoderFallback(true)
             }
 
             val trackSelector = DefaultTrackSelector(context).apply {
                 setParameters(
                     buildUponParameters()
-                        .setExceedRendererCapabilitiesIfNecessary(false)
-                        .setExceedVideoConstraintsIfNecessary(false)
-                        .setExceedAudioConstraintsIfNecessary(false)
+                        .setExceedRendererCapabilitiesIfNecessary(true)
+                        .setExceedVideoConstraintsIfNecessary(true)
+                        .setExceedAudioConstraintsIfNecessary(true)
                         .setPreferredAudioMimeTypes(
+                            MimeTypes.AUDIO_E_AC3,
+                            MimeTypes.AUDIO_AC3,
+                            MimeTypes.AUDIO_DTS,
+                            MimeTypes.AUDIO_TRUEHD,
                             MimeTypes.AUDIO_AAC,
                             MimeTypes.AUDIO_MPEG,
                             MimeTypes.AUDIO_OPUS,
                             MimeTypes.AUDIO_VORBIS,
-                            MimeTypes.AUDIO_FLAC,
-                            MimeTypes.AUDIO_E_AC3,
-                            MimeTypes.AUDIO_AC3
+                            MimeTypes.AUDIO_FLAC
                         )
                         .setViewportSizeToPhysicalDisplaySize(this@ExoPlayerManager.context, true)
                 )
@@ -383,11 +426,13 @@ class ExoPlayerManager(private val context: Context) {
         val codecStr = when (format.sampleMimeType) {
             MimeTypes.AUDIO_E_AC3 -> "DDP"
             MimeTypes.AUDIO_AC3 -> "DD"
+            MimeTypes.AUDIO_AC4 -> "AC-4"
             MimeTypes.AUDIO_AAC -> "AAC"
             MimeTypes.AUDIO_MPEG -> "MP3"
             MimeTypes.AUDIO_OPUS -> "Opus"
             MimeTypes.AUDIO_FLAC -> "FLAC"
             MimeTypes.AUDIO_DTS -> "DTS"
+            MimeTypes.AUDIO_TRUEHD -> "TrueHD"
             else -> ""
         }
 
@@ -738,13 +783,40 @@ class ExoPlayerManager(private val context: Context) {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(defaultUa)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20000)
-            .setReadTimeoutMs(25000)
+            .setConnectTimeoutMs(25000)
+            .setReadTimeoutMs(30000)
 
         val headers = stream.headers.toMutableMap()
         if (!headers.containsKey("User-Agent")) {
             headers["User-Agent"] = defaultUa
         }
+
+        val uriHost = try {
+            android.net.Uri.parse(stream.url).host?.lowercase() ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+        val isDirectCdn = uriHost.contains("pixeldrain") ||
+                uriHost.contains("googleusercontent") ||
+                uriHost.contains("r2.cloudflarestorage") ||
+                uriHost.contains("r2.dev") ||
+                uriHost.contains("workers.dev") ||
+                uriHost.contains("drive.google.com")
+
+        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub") {
+            val referer = headers["Referer"]
+            if (referer != null) {
+                val refererHost = try {
+                    android.net.Uri.parse(referer).host?.lowercase() ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (uriHost.isBlank() || refererHost.isBlank() || !uriHost.endsWith(refererHost)) {
+                    headers.remove("Referer")
+                }
+            }
+        }
+
         if (stream.provider == "moviebox" && !headers.containsKey("Referer")) {
             if (stream.format.equals("DASH", ignoreCase = true) || stream.url.contains(".mpd")) {
                 headers["Referer"] = "https://sportslive.wine"
@@ -761,11 +833,12 @@ class ExoPlayerManager(private val context: Context) {
 
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
 
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+
         val mimeType = when {
             stream.format.equals("DASH", ignoreCase = true) || stream.url.contains(".mpd") -> MimeTypes.APPLICATION_MPD
             stream.format.equals("HLS", ignoreCase = true) || stream.url.contains(".m3u8") || stream.url.contains("/range/") -> MimeTypes.APPLICATION_M3U8
-            stream.format.equals("MKV", ignoreCase = true) || stream.url.contains(".mkv") -> MimeTypes.VIDEO_MATROSKA
-            stream.format.equals("MP4", ignoreCase = true) || stream.url.contains(".mp4") -> MimeTypes.VIDEO_MP4
             else -> null
         }
 
@@ -793,7 +866,7 @@ class ExoPlayerManager(private val context: Context) {
             }
             .build()
 
-        return DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem)
+        return DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory).createMediaSource(mediaItem)
     }
 
     fun updatePosition() {

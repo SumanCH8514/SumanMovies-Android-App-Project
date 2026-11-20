@@ -67,7 +67,8 @@ class BackendRepository(baseUrl: String = "https://api.moviebox.sumanonline.com/
                     directFile = s.directFile,
                     codec = s.codec,
                     label = s.label,
-                    provider = provider
+                    provider = provider,
+                    audioLangs = s.audioLangs
                 )
             } ?: emptyList()
 

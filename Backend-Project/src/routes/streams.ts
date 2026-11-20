@@ -24,7 +24,8 @@ streamsRouter.get("/:provider/:id", async (c) => {
   try {
     if (provider === "reanime") {
       const client = new ReAnimeClient();
-      const result = await client.episodeStreams(id, Math.max(1, season), Math.max(1, episode), mal);
+      const origin = new URL(c.req.url).origin;
+      const result = await client.episodeStreams(id, Math.max(1, season), Math.max(1, episode), mal, origin);
       const response: StreamResponse = {
         provider: "reanime",
         id,

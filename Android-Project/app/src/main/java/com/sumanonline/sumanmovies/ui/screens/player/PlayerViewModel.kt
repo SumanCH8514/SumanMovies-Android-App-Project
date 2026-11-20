@@ -14,6 +14,7 @@ import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
+import com.sumanonline.sumanmovies.data.models.StreamMirror
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -27,13 +28,21 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 fun normalizeQualityBucket(stream: StreamSource): String {
+    val qRaw = stream.quality.lowercase().trim()
+    when {
+        qRaw.contains("2160") || qRaw.contains("4k") -> return "4K"
+        qRaw.contains("1080") -> return "1080p"
+        qRaw.contains("720") -> return "720p"
+        qRaw.contains("480") -> return "480p"
+        qRaw.contains("360") -> return "360p"
+    }
     val q = "${stream.quality} ${stream.category} ${stream.title ?: ""} ${stream.label}".lowercase()
     return when {
         q.contains("2160") || q.contains("4k") || q.contains("uhd") -> "4K"
         q.contains("1080") || q.contains("fhd") || q.contains("full hd") -> "1080p"
-        q.contains("720") || q.contains("hd") -> "720p"
         q.contains("480") || q.contains("sd") -> "480p"
         q.contains("360") -> "360p"
+        q.contains("720") || q.contains("hd") -> "720p"
         else -> "Auto"
     }
 }
@@ -88,7 +97,8 @@ data class PlayerUiState(
     val currentSeasonEpisodes: List<Episode> = emptyList(),
     val hasNextEpisode: Boolean = false,
     val hasPreviousEpisode: Boolean = false,
-    val dialogueBoostEnabled: Boolean = false
+    val dialogueBoostEnabled: Boolean = false,
+    val loadingStageText: String? = null
 )
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -114,7 +124,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         prefetchJob?.cancel()
         prefetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val targets = StreamingServer.entries.filter { it != currentServer }
+            val isAnime = _uiState.value.mediaType == MediaType.ANIME ||
+                _uiState.value.mediaId.startsWith("reanime:") ||
+                _uiState.value.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
+                com.sumanonline.sumanmovies.data.models.isAnimeCandidate(title, _uiState.value.mediaType, null, mediaId)
+            val targets = StreamingServer.getAvailableServers(isAnime, _uiState.value.serverStreamsMap.containsKey(StreamingServer.REANIME)).filter { it != currentServer }
             targets.forEach { srv ->
                 launch(Dispatchers.IO) {
                     if (_serverStreamsCache.containsKey(srv)) return@launch
@@ -275,6 +289,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             var lastHandledStreamKey: String? = null
 
             playerManager.playbackState.collectLatest { state ->
+                if (state.isPlaying && !state.isBuffering && _uiState.value.loadingStageText != null) {
+                    _uiState.value = _uiState.value.copy(loadingStageText = null)
+                }
                 val error = state.errorMessage
                 val current = _uiState.value.currentStream
 
@@ -347,7 +364,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             playerManager.clearError()
             switchStream(nextStream, currentPos)
         } else {
-            val otherServers = StreamingServer.entries.filter { it != server }
+            val isAnime = s.mediaType == MediaType.ANIME ||
+                s.mediaId.startsWith("reanime:") ||
+                s.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
+                com.sumanonline.sumanmovies.data.models.isAnimeCandidate(s.mediaTitle, s.mediaType, null, s.mediaId)
+            val otherServers = StreamingServer.getAvailableServers(isAnime, s.serverStreamsMap.containsKey(StreamingServer.REANIME)).filter { it != server }
             var altServerStream: Pair<StreamingServer, StreamSource>? = null
             for (altSrv in otherServers) {
                 val altStreams = s.serverStreamsMap[altSrv]
@@ -438,6 +459,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         initialQuality: String? = null,
         initialProvider: String? = null,
         initialDirect: Boolean = false,
+        initialIsLocker: Boolean = false,
         initialHeaders: Map<String, String> = emptyMap(),
         serverName: String? = null,
         serverDisplayName: String? = null,
@@ -510,14 +532,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         label = "$resolvedServerDisplay - ${initialQuality ?: "HD"}",
                         provider = initialProvider ?: serverEnum.id,
                         directFile = initialDirect,
-                        headers = initialHeaders
+                        headers = initialHeaders,
+                        isLockerUrl = initialIsLocker || repository.isLockerUrl(initialStreamUrl)
                     )
             } else null
 
-            val mergedInitial = if (initialStream != null) {
+            val mergedInitial = (if (initialStream != null) {
                 listOf(initialStream) + initialStreams.filter { it.url != initialStream.url }
             } else {
                 initialStreams
+            }).map { s ->
+                if (!s.isLockerUrl && repository.isLockerUrl(s.url)) {
+                    s.copy(isLockerUrl = true)
+                } else s
             }
 
             val supports4k = com.sumanonline.sumanmovies.util.DeviceCapabilities.supports4KHevc()
@@ -574,11 +601,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             val toPrepare = defaultStream
             if (toPrepare != null) {
-                if (toPrepare.isLockerUrl) {
+                val isLocker = toPrepare.isLockerUrl || repository.isLockerUrl(toPrepare.url)
+                if (isLocker) {
                     _uiState.value = _uiState.value.copy(resolvingStreamUrl = toPrepare.url)
                     val resolved = repository.resolveLockerUrl(toPrepare.url)
                     _uiState.value = _uiState.value.copy(resolvingStreamUrl = null)
-                    if (resolved != null && resolved.url.isNotBlank()) {
+                    if (resolved != null && resolved.url.isNotBlank() && !repository.isLockerUrl(resolved.url)) {
                         val finalStream = toPrepare.copy(
                             url = resolved.url,
                             headers = resolved.headers,
@@ -596,9 +624,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             playerManager.prepareStream(finalStream, _serverSubtitles.value, resumePositionMs)
                         }
                     } else {
-                        if (!toPrepare.format.equals("EMBED", ignoreCase = true)) {
-                            playerManager.prepareStream(toPrepare, _serverSubtitles.value, resumePositionMs)
-                        }
+                        triggerAutoFallback(toPrepare, "Direct playback link unavailable")
                     }
                 } else {
                     if (!toPrepare.format.equals("EMBED", ignoreCase = true)) {
@@ -621,7 +647,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             )
             val currentList = _uiState.value.availableStreams.toMutableList()
             for (newS in resolvedState.streams) {
-                if (currentList.none { it.url == newS.url }) {
+                val existingIndex = currentList.indexOfFirst {
+                    it.url == newS.url || (it.title != null && it.title == newS.title)
+                }
+                if (existingIndex >= 0) {
+                    val existing = currentList[existingIndex]
+                    if (!existing.isLockerUrl && newS.isLockerUrl) {
+                        currentList[existingIndex] = existing.copy(
+                            mirrors = if (existing.mirrors.isEmpty()) newS.mirrors else existing.mirrors,
+                            sizeFormatted = existing.sizeFormatted ?: newS.sizeFormatted,
+                            audioLangs = existing.audioLangs ?: newS.audioLangs,
+                            codec = existing.codec ?: newS.codec
+                        )
+                    }
+                } else {
                     currentList.add(newS)
                 }
             }
@@ -649,8 +688,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             )
             if (_uiState.value.currentStream == null && currentList.isNotEmpty()) {
                 val first = currentList.first()
-                _uiState.value = _uiState.value.copy(currentStream = first)
-                playerManager.prepareStream(first, _serverSubtitles.value, resumePositionMs)
+                switchStream(first, resumePositionMs)
             }
             prefetchOtherServers(
                 title = cleanBase,
@@ -789,7 +827,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             episodeTitle = epTitle,
             episodeStillUrl = epStill,
             isEpisodesDrawerOpen = false,
-            isLoadingStreams = true
+            isLoadingStreams = true,
+            loadingStageText = "Loading new Episode..."
         )
         viewModelScope.launch {
             _serverStreamsCache.clear()
@@ -973,6 +1012,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         switchStream(stream)
     }
 
+    fun selectStreamMirror(stream: StreamSource, mirror: StreamMirror) {
+        val targetStream = stream.copy(
+            url = mirror.url,
+            mirrorName = mirror.name,
+            isLockerUrl = mirror.isLocker || repository.isLockerUrl(mirror.url)
+        )
+        val s = _uiState.value
+        val targetServer = s.drawerSelectedServer
+        val serverSubs = _serverSubtitlesCache[targetServer] ?: _serverSubtitles.value
+        _serverSubtitles.value = serverSubs
+        val streamsForServer = s.serverStreamsMap[targetServer] ?: listOf(targetStream)
+        _uiState.value = s.copy(
+            selectedServer = targetServer,
+            serverName = targetServer.name,
+            serverDisplayName = targetServer.displayName,
+            availableStreams = streamsForServer,
+            loadingStageText = "Connecting to Server..."
+        )
+        switchStream(targetStream)
+    }
+
     fun switchServerInPlayer(server: StreamingServer) {
         selectDrawerServer(server)
     }
@@ -1012,12 +1072,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun switchStream(stream: StreamSource, overridePositionMs: Long? = null) {
         val currentPos = overridePositionMs ?: playerManager.playbackState.value.currentPositionMs
-        if (stream.isLockerUrl) {
+        val isLocker = stream.isLockerUrl || repository.isLockerUrl(stream.url)
+        if (isLocker) {
             viewModelScope.launch {
-                _uiState.value = _uiState.value.copy(resolvingStreamUrl = stream.url)
+                _uiState.value = _uiState.value.copy(
+                    resolvingStreamUrl = stream.url,
+                    loadingStageText = "Checking Host..."
+                )
                 val resolved = repository.resolveLockerUrl(stream.url)
                 _uiState.value = _uiState.value.copy(resolvingStreamUrl = null)
-                val finalStream = if (resolved != null && resolved.url.isNotBlank()) {
+                val finalStream = if (resolved != null && resolved.url.isNotBlank() && !repository.isLockerUrl(resolved.url)) {
                     stream.copy(
                         url = resolved.url,
                         headers = resolved.headers,
@@ -1033,10 +1097,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 val updated = _uiState.value.availableStreams.map {
-                    if (it.url == stream.url) finalStream else it
+                    if (it.url == stream.url || (it.title != null && it.title == stream.title)) finalStream else it
+                }
+                val currentMap = _uiState.value.serverStreamsMap.toMutableMap()
+                val currentServerList = currentMap[_uiState.value.selectedServer]?.map {
+                    if (it.url == stream.url || (it.title != null && it.title == stream.title)) finalStream else it
+                }
+                if (currentServerList != null) {
+                    currentMap[_uiState.value.selectedServer] = currentServerList
                 }
                 _uiState.value = _uiState.value.copy(
                     availableStreams = updated,
+                    serverStreamsMap = currentMap,
                     currentStream = finalStream,
                     isStreamsDrawerOpen = false,
                     playbackErrorMessage = null,
@@ -1047,7 +1119,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         } else {
+            _uiState.value = _uiState.value.copy(loadingStageText = "Loading Video...")
+            val updated = _uiState.value.availableStreams.map {
+                if (it.url == stream.url || (it.title != null && it.title == stream.title)) stream else it
+            }
+            val currentMap = _uiState.value.serverStreamsMap.toMutableMap()
+            val currentServerList = currentMap[_uiState.value.selectedServer]?.map {
+                if (it.url == stream.url || (it.title != null && it.title == stream.title)) stream else it
+            }
+            if (currentServerList != null) {
+                currentMap[_uiState.value.selectedServer] = currentServerList
+            }
             _uiState.value = _uiState.value.copy(
+                availableStreams = updated,
+                serverStreamsMap = currentMap,
                 currentStream = stream,
                 isStreamsDrawerOpen = false,
                 playbackErrorMessage = null,
@@ -1104,9 +1189,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } else null
 
-                val streamToDownload = if (curStream.isLockerUrl) {
+                val isLocker = curStream.isLockerUrl || repository.isLockerUrl(curStream.url)
+                val streamToDownload = if (isLocker) {
                     val resolved = repository.resolveLockerUrl(curStream.url)
-                    if (resolved != null && resolved.url.isNotBlank()) {
+                    if (resolved != null && resolved.url.isNotBlank() && !repository.isLockerUrl(resolved.url)) {
                         curStream.copy(
                             url = resolved.url,
                             headers = resolved.headers,

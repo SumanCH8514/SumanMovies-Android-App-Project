@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 
 
 
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 
 
@@ -554,355 +555,139 @@ class FourKHdHubMobileClient {
 
 
 
-            val blockPattern = Pattern.compile(
-
-
-
+                        val blockPattern = Pattern.compile(
                 """<div[^>]*class=["'][^"']*season-item\s+episode-item[^"']*["']([\s\S]*?)(?=<div[^>]*class=["'][^"']*season-item\s+episode-item|$|<footer)""",
-
-
-
                 Pattern.CASE_INSENSITIVE
-
-
-
             )
-
-
-
             val blockMatcher = blockPattern.matcher(html)
-
-
-
             while (blockMatcher.find()) {
-
-
-
                 val blockHtml = blockMatcher.group(1) ?: continue
-
-
-
                 val formatTitleMatcher = Pattern.compile("""<h3[^>]*class=["']episode-title["'][^>]*>([^<]+)</h3>""", Pattern.CASE_INSENSITIVE).matcher(blockHtml)
-
-
-
                 val formatTitle = if (formatTitleMatcher.find()) formatTitleMatcher.group(1)?.trim() ?: "" else ""
-
-
-
                 val seasonMatcher = Pattern.compile("""\b(?:S0?|Season\s*0?)(\d+)\b""", Pattern.CASE_INSENSITIVE).matcher(formatTitle)
-
-
-
                 val blockSeason = if (seasonMatcher.find()) seasonMatcher.group(1)?.toIntOrNull() ?: 1 else 1
-
-
-
                 if (season > 0 && blockSeason != season) continue
-
-
-
                 val metaMatcher = Pattern.compile("""<div[^>]*class=["']episode-meta["'][^>]*>([\s\S]*?)</div>""", Pattern.CASE_INSENSITIVE).matcher(blockHtml)
-
-
-
                 val rawMeta = if (metaMatcher.find()) metaMatcher.group(1) ?: "" else ""
-
-
-
                 val badgeMatcher = Pattern.compile("""<span[^>]*class=["']badge["'][^>]*>([^<]+)</span>""", Pattern.CASE_INSENSITIVE).matcher(rawMeta)
-
-
-
                 val badges = mutableListOf<String>()
-
-
-
                 while (badgeMatcher.find()) {
-
-
-
                     val b = badgeMatcher.group(1)?.trim() ?: continue
-
-
-
                     if (!b.contains("Episodes", ignoreCase = true) && !b.contains("Episode", ignoreCase = true)) {
-
-
-
                         badges.add(b)
-
-
-
                     }
-
-
-
                 }
-
-
-
                 val audioLangs = if (badges.isNotEmpty()) badges.joinToString(", ") else "Multi Audio"
-
-
-
                 val epPattern = Pattern.compile(
-
-
-
                     """<div\s+class=["'][^"']*episode-download-item[^"']*["']([\s\S]*?)(?=<div\s+class=["'][^"']*episode-download-item|$|</div>\s*</div>\s*</div>)""",
-
-
-
                     Pattern.CASE_INSENSITIVE
-
-
-
                 )
-
-
-
                 val epMatcher = epPattern.matcher(blockHtml)
-
-
-
-                val epNumberStr = if (episode < 10) "0$episode" else "$episode"
-
-
-
-                val epTokens = listOf("Episode-$epNumberStr", "Episode $epNumberStr", "Episode-$episode", "E$epNumberStr", "E$episode", "S${blockSeason}E$epNumberStr", "S0${blockSeason}E$epNumberStr")
-
-
-
+                val targetEpRegex = Regex("""(?i)\b(?:Episode\s*[-–]?\s*0?${episode}|E0?${episode}|S0?${blockSeason}E0?${episode})\b""")
                 while (epMatcher.find()) {
-
-
-
                     val epHtml = epMatcher.group(1) ?: continue
-
-
-
                     val badgePsaMatcher = Pattern.compile("""<span[^>]*class=["']badge-psa["'][^>]*>([^<]+)</span>""", Pattern.CASE_INSENSITIVE).matcher(epHtml)
-
-
-
                     val badgePsa = if (badgePsaMatcher.find()) badgePsaMatcher.group(1)?.trim() ?: "" else ""
-
-
-
                     val ftMatcher = Pattern.compile("""<div[^>]*class=["']episode-file-title["'][^>]*>([\s\S]*?)</div>""", Pattern.CASE_INSENSITIVE).matcher(epHtml)
-
-
-
                     val fileTitle = if (ftMatcher.find()) ftMatcher.group(1)?.replace(Regex("<[^>]+>"), " ")?.trim() ?: "" else ""
-
-
-
-                    val matchesTargetEp = epTokens.any { badgePsa.contains(it, ignoreCase = true) || fileTitle.contains(it, ignoreCase = true) }
-
-
-
+                    val matchesTargetEp = targetEpRegex.containsMatchIn(badgePsa) || targetEpRegex.containsMatchIn(fileTitle)
                     if (!matchesTargetEp && episode > 0) continue
-
-
-
                     val sizeMatcher = Pattern.compile("""<span[^>]*class=["']badge-size["'][^>]*>([^<]+)</span>""", Pattern.CASE_INSENSITIVE).matcher(epHtml)
-
-
-
                     val sizeFormatted = if (sizeMatcher.find()) sizeMatcher.group(1)?.trim() else null
 
+                    val linkMatcher = Pattern.compile("""<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)</a>""", Pattern.CASE_INSENSITIVE).matcher(epHtml)
+                    var hubCloudUrl: String? = null
+                    var hubDriveUrl: String? = null
+                    while (linkMatcher.find()) {
+                        val href = linkMatcher.group(1) ?: continue
+                        val text = linkMatcher.group(2)?.replace(Regex("<[^>]+>"), "")?.trim() ?: ""
+                        if (text.contains("hubcloud", ignoreCase = true) || href.contains("hubcloud", ignoreCase = true)) {
+                            hubCloudUrl = href
+                        } else if (text.contains("hubdrive", ignoreCase = true) || href.contains("hubdrive", ignoreCase = true)) {
+                            hubDriveUrl = href
+                        }
+                    }
 
-
-                    val mirrors = extractMirrorsFromSnippet(epHtml)
-
-
-
+                    val mirrors = mutableListOf<StreamMirror>()
+                    if (hubCloudUrl != null) {
+                        mirrors.add(StreamMirror(name = "Server 1 (PixelServer)", url = "$hubCloudUrl#server1", isLocker = true))
+                        mirrors.add(StreamMirror(name = "Server 2 (10Gbps Google)", url = "$hubCloudUrl#server2", isLocker = true))
+                    }
+                    if (hubDriveUrl != null) {
+                        mirrors.add(StreamMirror(name = "Server 3 (HubDrive Direct)", url = "$hubDriveUrl#server3", isLocker = true))
+                    }
+                    if (mirrors.isEmpty()) {
+                        mirrors.addAll(extractMirrorsFromSnippet(epHtml))
+                    }
                     if (mirrors.isEmpty()) continue
 
+                    val is4k = Regex("""\b(2160p|4k|uhd)\b""", RegexOption.IGNORE_CASE).containsMatchIn(formatTitle)
+                    val is1080 = Regex("""\b(1080p|fhd)\b""", RegexOption.IGNORE_CASE).containsMatchIn(formatTitle)
+                    val is720 = Regex("""\b(720p|hd)\b""", RegexOption.IGNORE_CASE).containsMatchIn(formatTitle)
+                    val is480 = Regex("""\b(480p|sd)\b""", RegexOption.IGNORE_CASE).containsMatchIn(formatTitle)
 
-
-                    val category = determineCategory(if (formatTitle.isNotBlank()) formatTitle else fileTitle, emptyList())
-
-
+                    val category = when {
+                        is4k -> "2160p / 4K"
+                        is1080 -> "1080p"
+                        is720 -> "720p"
+                        is480 -> "480p"
+                        else -> determineCategory(if (formatTitle.isNotBlank()) formatTitle else fileTitle, emptyList())
+                    }
 
                     val quality = when {
-
-
-
-                        formatTitle.contains("2160p", ignoreCase = true) || formatTitle.contains("4k", ignoreCase = true) -> "4K 2160p UHD HDR"
-
-
-
-                        formatTitle.contains("1080p", ignoreCase = true) -> if (formatTitle.contains("remux", ignoreCase = true)) "1080p Remux AVC" else "1080p Full HD"
-
-
-
-                        formatTitle.contains("720p", ignoreCase = true) -> "720p HD"
-
-
-
-                        formatTitle.contains("480p", ignoreCase = true) -> "480p SD"
-
-
-
-                        category == "2160p / 4K" -> "4K 2160p UHD HDR"
-
-
-
-                        category == "1080p" -> "1080p Full HD"
-
-
-
-                        category == "720p" -> "720p HD"
-
-
-
-                        category == "480p" -> "480p SD"
-
-
-
+                        is4k -> "4K 2160p UHD HDR"
+                        formatTitle.contains("remux", ignoreCase = true) -> "1080p Remux AVC"
+                        is1080 -> "1080p Full HD"
+                        is720 -> "720p HD"
+                        is480 -> "480p SD"
                         else -> "HD"
-
-
-
                     }
-
-
 
                     val isMkv = fileTitle.contains(".mkv", ignoreCase = true) || formatTitle.contains("mkv", ignoreCase = true)
-
-
-
                     val isHevc = formatTitle.contains("h265", ignoreCase = true) || formatTitle.contains("hevc", ignoreCase = true) || formatTitle.contains("x265", ignoreCase = true) || fileTitle.contains("h265", ignoreCase = true) || fileTitle.contains("hevc", ignoreCase = true) || fileTitle.contains("x265", ignoreCase = true)
-
-
-
                     val sourceTag = when {
-
-
-
                         formatTitle.contains("bluray", ignoreCase = true) -> "BluRay"
-
-
-
                         formatTitle.contains("web-dl", ignoreCase = true) -> "WEB-DL"
-
-
-
                         formatTitle.contains("webrip", ignoreCase = true) -> "WEBRip"
-
-
-
                         else -> "WEB-DL"
-
-
-
                     }
 
-
-
                     val epDisplayTitle = if (formatTitle.isNotBlank()) "$formatTitle • Episode $episode" else if (fileTitle.isNotBlank()) fileTitle else "Episode $episode"
-
-
-
                     val label = if (!sizeFormatted.isNullOrBlank()) "$epDisplayTitle • $sizeFormatted" else epDisplayTitle
 
-
-
                     options.add(
-
-
-
                         StreamSource(
-
-
-
                             quality = quality,
-
-
-
                             format = if (isMkv) "MKV" else "MP4",
-
-
-
                             url = mirrors.first().url,
-
-
-
                             headers = mapOf("User-Agent" to mobileUserAgent, "Referer" to pageReferer),
-
-
-
                             sizeBytes = parseSizeBytes(sizeFormatted),
-
-
-
                             directFile = true,
-
-
-
                             codec = if (isHevc) "HEVC" else "H264",
-
-
-
                             label = label,
-
-
-
                             provider = "fourkhdhub",
-
-
-
                             audioLangs = audioLangs,
-
-
-
                             sizeFormatted = sizeFormatted,
-
-
-
                             title = epDisplayTitle,
-
-
-
                             sourceQualityTag = sourceTag,
-
-
-
                             mirrorName = mirrors.first().name,
-
-
-
                             isLockerUrl = mirrors.first().isLocker,
-
-
-
                             category = category,
-
-
-
                             mirrors = mirrors
-
-
-
                         )
-
-
-
                     )
-
-
-
                 }
-
-
-
             }
-
-
-
-            if (options.isNotEmpty()) return options
+            if (options.isNotEmpty()) {
+                val categoryRank = listOf("2160p / 4K", "1080p", "720p", "480p", "Other")
+                return options.sortedWith(
+                    compareBy<StreamSource> { s ->
+                        val idx = categoryRank.indexOf(s.category)
+                        if (idx >= 0) idx else 99
+                    }.thenByDescending { it.codec == "HEVC" }
+                    .thenByDescending { it.sizeBytes ?: 0L }
+                )
+            }
 
 
 
@@ -1333,26 +1118,25 @@ class FourKHdHubMobileClient {
 
 
     private fun extractMirrorsFromSnippet(snippet: String): List<StreamMirror> {
-
-
-
-        val mirrors = mutableListOf<StreamMirror>()
-
-
-
         val linkPattern = Pattern.compile(
-
-
-
             """<a\s+[^>]*href=["'](https?://[^"']*(?:greenmotors|greenmountmotors|hubcdn|hubcloud|hubdrive|pixeldrain)[^"']*)["'][^>]*>([\s\S]*?)</a>""",
             Pattern.CASE_INSENSITIVE
         )
         val matcher = linkPattern.matcher(snippet)
         val seenUrls = mutableSetOf<String>()
+        var hubCloudUrl: String? = null
+        var hubDriveUrl: String? = null
+        val fallbackMirrors = mutableListOf<StreamMirror>()
         while (matcher.find()) {
             val url = matcher.group(1) ?: continue
             if (!seenUrls.add(url)) continue
             val rawText = matcher.group(2)?.replace(Regex("<[^>]+>"), " ")?.replace("&nbsp;", " ")?.trim() ?: ""
+            if (rawText.contains("HubCloud", ignoreCase = true) || url.contains("hubcloud", ignoreCase = true) || url.contains("greenmotors", ignoreCase = true) || url.contains("greenmountmotors", ignoreCase = true)) {
+                if (hubCloudUrl == null) hubCloudUrl = url
+            }
+            if (rawText.contains("HubDrive", ignoreCase = true) || url.contains("hubdrive", ignoreCase = true)) {
+                if (hubDriveUrl == null) hubDriveUrl = url
+            }
             val name = when {
                 rawText.contains("HubDrive", ignoreCase = true) || url.contains("hubdrive", ignoreCase = true) -> "HubDrive"
                 rawText.contains("HubCloud", ignoreCase = true) || url.contains("hubcloud", ignoreCase = true) -> "HubCloud (Fast CDN)"
@@ -1360,28 +1144,22 @@ class FourKHdHubMobileClient {
                 rawText.contains("PixelDrain", ignoreCase = true) || url.contains("pixeldrain", ignoreCase = true) -> "PixelDrain Direct"
                 else -> "Fast Mirror"
             }
-
-
-
             val isLocker = !url.contains("pixeldrain.com")
-
-
-
-            mirrors.add(StreamMirror(name = name, url = url, isLocker = isLocker))
-
-
-
+            fallbackMirrors.add(StreamMirror(name = name, url = url, isLocker = isLocker))
         }
-
-
-
+        val mirrors = mutableListOf<StreamMirror>()
+        if (hubCloudUrl != null) {
+            mirrors.add(StreamMirror(name = "Server 1 (PixelServer)", url = "$hubCloudUrl#server1", isLocker = true))
+            mirrors.add(StreamMirror(name = "Server 2 (10Gbps Google)", url = "$hubCloudUrl#server2", isLocker = true))
+        }
+        if (hubDriveUrl != null) {
+            mirrors.add(StreamMirror(name = "Server 3 (HubDrive Direct)", url = "$hubDriveUrl#server3", isLocker = true))
+        }
+        if (mirrors.isEmpty()) {
+            mirrors.addAll(fallbackMirrors)
+        }
         return mirrors
-
-
-
     }
-
-
 
     private fun determineCategory(title: String, badges: List<String>): String {
 
@@ -1506,6 +1284,14 @@ class FourKHdHubMobileClient {
     suspend fun resolveLockerUrl(url: String, referer: String = baseUrl): StreamSource? = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = url.trim()
+            val serverTarget = when {
+                cleanUrl.contains("#server1") -> "server1"
+                cleanUrl.contains("#server2") -> "server2"
+                cleanUrl.contains("#server3") -> "server3"
+                else -> "auto"
+            }
+            val strippedUrl = cleanUrl.substringBefore("#").trim()
+
             if (cleanUrl.contains("pixeldrain.com")) {
                 val idMatch = Regex("""pixeldrain\.com/(?:u|api/file)/([a-zA-Z0-9_-]+)""").find(cleanUrl)
                 val fileId = idMatch?.groupValues?.get(1)
@@ -1517,20 +1303,20 @@ class FourKHdHubMobileClient {
                         headers = mapOf("User-Agent" to mobileUserAgent),
                         directFile = true,
                         codec = "HEVC",
-                        label = "PixelDrain Direct (1080p)",
+                        label = "Server 1 (PixelServer)",
                         provider = "fourkhdhub",
                         isLockerUrl = false
                     )
                 }
             }
 
-            if (cleanUrl.contains("hblinks.")) {
-                val resolved = resolveHblinks(cleanUrl, referer)
+            if (strippedUrl.contains("hblinks.")) {
+                val resolved = resolveHblinks(strippedUrl, referer)
                 if (resolved.isNotEmpty()) return@withContext resolved.first()
             }
 
-            if (cleanUrl.contains("pixel.hubcloud.")) {
-                val direct = resolvePixelHubCloud(cleanUrl, referer)
+            if (strippedUrl.contains("pixel.hubcloud.")) {
+                val direct = resolvePixelHubCloud(strippedUrl, referer)
                 if (direct != null) {
                     val sanitized = direct.replace("&amp;", "&")
                     return@withContext StreamSource(
@@ -1547,40 +1333,40 @@ class FourKHdHubMobileClient {
                 }
             }
 
-            if (cleanUrl.contains("greenmotors") || cleanUrl.contains("greenmountmotors")) {
-                val resolved = resolveGreenMotorsLocker(cleanUrl, referer)
+            if (strippedUrl.contains("greenmotors") || strippedUrl.contains("greenmountmotors")) {
+                val resolved = resolveGreenMotorsLocker(strippedUrl, referer, serverTarget)
                 if (resolved.isNotEmpty()) return@withContext resolved.first()
             }
 
-            if (cleanUrl.contains("hubcdn.")) {
-                val resolved = resolveHubCdnLocker(cleanUrl, referer)
+            if (strippedUrl.contains("hubcdn.")) {
+                val resolved = resolveHubCdnLocker(strippedUrl, referer)
                 if (resolved.isNotEmpty()) return@withContext resolved.first()
             }
 
-            if (cleanUrl.contains("hubcloud.")) {
-                val resolved = resolveHubCloudLocker(cleanUrl, referer)
+            if (strippedUrl.contains("hubcloud.")) {
+                val resolved = resolveHubCloudLocker(strippedUrl, referer, serverTarget)
                 if (resolved.isNotEmpty()) return@withContext resolved.first()
             }
 
-            if (cleanUrl.contains("hubdrive.")) {
-                val resolved = resolveHubDriveLocker(cleanUrl, referer)
+            if (strippedUrl.contains("hubdrive.")) {
+                val resolved = resolveHubDriveLocker(strippedUrl, referer, serverTarget)
                 if (resolved.isNotEmpty()) return@withContext resolved.first()
             }
 
-            val isKnownLocker = cleanUrl.contains("greenmotors") ||
-                    cleanUrl.contains("greenmountmotors") ||
-                    cleanUrl.contains("hubcdn.") ||
-                    cleanUrl.contains("hubcloud.") ||
-                    cleanUrl.contains("hubdrive.") ||
-                    cleanUrl.contains("gamerxyt.com") ||
-                    cleanUrl.contains("hblinks.")
+            val isKnownLocker = strippedUrl.contains("greenmotors") ||
+                    strippedUrl.contains("greenmountmotors") ||
+                    strippedUrl.contains("hubcdn.") ||
+                    strippedUrl.contains("hubcloud.") ||
+                    strippedUrl.contains("hubdrive.") ||
+                    strippedUrl.contains("gamerxyt.com") ||
+                    strippedUrl.contains("hblinks.")
 
-            if (!isKnownLocker && (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://"))) {
+            if (!isKnownLocker && (strippedUrl.startsWith("http://") || strippedUrl.startsWith("https://"))) {
                 return@withContext StreamSource(
                     quality = "HD",
-                    format = if (cleanUrl.contains(".mkv")) "MKV" else "MP4",
-                    url = cleanUrl.replace("&amp;", "&"),
-                    headers = mapOf("User-Agent" to mobileUserAgent, "Referer" to referer),
+                    format = if (strippedUrl.contains(".mkv")) "MKV" else "MP4",
+                    url = strippedUrl.replace("&amp;", "&"),
+                    headers = mapOf("User-Agent" to mobileUserAgent),
                     directFile = true,
                     codec = "H264",
                     label = "Direct Stream",
@@ -2075,7 +1861,7 @@ class FourKHdHubMobileClient {
         results
     }
 
-    private suspend fun resolveGreenMotorsLocker(link: String, referer: String): List<StreamSource> = withContext(Dispatchers.IO) {
+    private suspend fun resolveGreenMotorsLocker(link: String, referer: String, serverTarget: String = "auto"): List<StreamSource> = withContext(Dispatchers.IO) {
         val results = mutableListOf<StreamSource>()
         try {
             val req = Request.Builder()
@@ -2093,9 +1879,9 @@ class FourKHdHubMobileClient {
                 if (targetUrl.contains("hblinks.")) {
                     return@withContext resolveHblinks(targetUrl, link)
                 } else if (targetUrl.contains("hubcloud.")) {
-                    return@withContext resolveHubCloudLocker(targetUrl, link)
+                    return@withContext resolveHubCloudLocker(targetUrl, link, serverTarget)
                 } else if (targetUrl.contains("hubdrive.")) {
-                    return@withContext resolveHubDriveLocker(targetUrl, link)
+                    return@withContext resolveHubDriveLocker(targetUrl, link, serverTarget)
                 } else if (targetUrl.contains("hubcdn.")) {
                     return@withContext resolveHubCdnLocker(targetUrl, link)
                 } else if (targetUrl.contains("pixeldrain.")) {
@@ -2109,7 +1895,7 @@ class FourKHdHubMobileClient {
                                 headers = mapOf("User-Agent" to mobileUserAgent),
                                 directFile = true,
                                 codec = "HEVC",
-                                label = "PixelDrain Direct",
+                                label = "Server 1 (PixelServer)",
                                 provider = "fourkhdhub",
                                 isLockerUrl = false
                             )
@@ -2137,7 +1923,7 @@ class FourKHdHubMobileClient {
         results
     }
 
-    private suspend fun resolveHubDriveLocker(hubDriveUrl: String, referer: String): List<StreamSource> = withContext(Dispatchers.IO) {
+    private suspend fun resolveHubDriveLocker(hubDriveUrl: String, referer: String, serverTarget: String = "auto"): List<StreamSource> = withContext(Dispatchers.IO) {
         val results = mutableListOf<StreamSource>()
         try {
             val req = Request.Builder()
@@ -2149,10 +1935,55 @@ class FourKHdHubMobileClient {
             if (!resp.isSuccessful) return@withContext emptyList()
             val body = resp.body?.string() ?: return@withContext emptyList()
 
+            val downId = Regex("""id=["']down-id["'][^>]*>([^<]+)<""").find(body)?.groupValues?.get(1)?.trim()
+                ?: Regex("""/file/(\d+)""").find(hubDriveUrl)?.groupValues?.get(1)
+
+            if (!downId.isNullOrBlank()) {
+                try {
+                    val formBody = FormBody.Builder()
+                        .add("id", downId)
+                        .build()
+                    val ajaxReq = Request.Builder()
+                        .url("https://hubdrive.blog/ajax.php?ajax=direct-download")
+                        .post(formBody)
+                        .header("User-Agent", mobileUserAgent)
+                        .header("Referer", hubDriveUrl)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .header("Cookie", "xla=s4t")
+                        .build()
+                    val ajaxResp = client.newCall(ajaxReq).execute()
+                    if (ajaxResp.isSuccessful) {
+                        val ajaxJson = ajaxResp.body?.string() ?: ""
+                        val jsonObj = JsonParser.parseString(ajaxJson).asJsonObject
+                        if (jsonObj.has("code") && jsonObj.get("code").asInt == 200) {
+                            val dataObj = jsonObj.getAsJsonObject("data")
+                            val gdUrl = dataObj?.get("gd")?.asString
+                            if (!gdUrl.isNullOrBlank() && (gdUrl.startsWith("http://") || gdUrl.startsWith("https://"))) {
+                                results.add(
+                                    StreamSource(
+                                        quality = "1080p Full HD",
+                                        format = "MKV",
+                                        url = gdUrl,
+                                        headers = mapOf("User-Agent" to mobileUserAgent),
+                                        directFile = true,
+                                        codec = "HEVC",
+                                        label = "Server 3 (HubDrive Instant Direct)",
+                                        provider = "fourkhdhub",
+                                        isLockerUrl = false
+                                    )
+                                )
+                                return@withContext results
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
             val hubCloudMatch = Regex("""href=["'](https?://[^"'\s]*(?:hubcloud|hubdrive)\.[^"'\s]*/(?:drive|file|d)/[^"'\s]*)["']""").find(body)
                 ?: Regex("""href=["'](https?://[^"'\s]*hubcloud\.[^"'\s]+/[^"'\s]*)["']""").find(body)
             if (hubCloudMatch != null) {
-                results.addAll(resolveHubCloudLocker(hubCloudMatch.groupValues[1], hubDriveUrl))
+                results.addAll(resolveHubCloudLocker(hubCloudMatch.groupValues[1], hubDriveUrl, serverTarget))
+                if (results.isNotEmpty()) return@withContext results
             }
 
             val pdMatches = Regex("""https?://pixeldrain\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)""").findAll(body)
@@ -2168,7 +1999,7 @@ class FourKHdHubMobileClient {
                             headers = mapOf("User-Agent" to mobileUserAgent),
                             directFile = true,
                             codec = "HEVC",
-                            label = "4KHDHub PixelDrain Direct",
+                            label = "Server 3 (HubDrive PixelServer)",
                             provider = "fourkhdhub",
                             isLockerUrl = false
                         )
@@ -2179,7 +2010,7 @@ class FourKHdHubMobileClient {
         results
     }
 
-    private suspend fun resolveHubCloudLocker(hubUrl: String, referer: String): List<StreamSource> = withContext(Dispatchers.IO) {
+    private suspend fun resolveHubCloudLocker(hubUrl: String, referer: String, serverTarget: String = "auto"): List<StreamSource> = withContext(Dispatchers.IO) {
         val results = mutableListOf<StreamSource>()
         try {
             val req = Request.Builder()
@@ -2194,29 +2025,12 @@ class FourKHdHubMobileClient {
             val is4k = body.contains("2160p") || body.contains("4K") || body.contains("UHD")
             val qualityLabel = if (is4k) "4K 2160p UHD HDR" else "1080p Full HD"
 
-            val pdMatches = Regex("""https?://pixeldrain\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)""").findAll(body)
-            for (m in pdMatches) {
-                val fileId = m.groupValues[1]
-                results.add(
-                    StreamSource(
-                        quality = qualityLabel,
-                        format = "MKV",
-                        url = "https://pixeldrain.com/api/file/$fileId?download",
-                        headers = mapOf("User-Agent" to mobileUserAgent),
-                        directFile = true,
-                        codec = if (is4k) "HEVC" else "x264",
-                        label = "4KHDHub PixelDrain Direct ($qualityLabel)",
-                        provider = "fourkhdhub",
-                        isLockerUrl = false
-                    )
-                )
-            }
-
-            val resolverBtn = Regex("""<a[^>]+id=["']download["'][^>]+href=["']([^"']+)["']""").find(body)
-                ?: Regex("""<a[^>]+href=["'](https?://[^"'\s]*(?:gamerxyt|hubcloud\.php)[^"'\s]*)["']""").find(body)
+            val resolverBtn = Regex("""<a[^>]+href=["'](https?://[^"'\s]*(?:gamerxyt|hubcloud\.php)[^"'\s]*)["']""").find(body)
+                ?: Regex("""<a[^>]+id=["']download["'][^>]+href=["']([^"']+)["']""").find(body)
                 ?: Regex("""<a[^>]+class=["'][^"']*btn-primary[^"']*["'][^>]+href=["']([^"']+)["']""").find(body)
 
             val resolverUrl = resolverBtn?.groupValues?.get(1)
+            var resBody = ""
             if (!resolverUrl.isNullOrBlank() && resolverUrl.startsWith("http")) {
                 val resReq = Request.Builder()
                     .url(resolverUrl)
@@ -2225,85 +2039,98 @@ class FourKHdHubMobileClient {
                     .build()
                 val resResp = client.newCall(resReq).execute()
                 if (resResp.isSuccessful) {
-                    val resBody = resResp.body?.string() ?: ""
+                    resBody = resResp.body?.string() ?: ""
+                }
+            }
 
-                    val r2Matches = Regex("""href=["'](https?://[^"'\s]*(?:\.r2\.cloudflarestorage\.com|\.r2\.dev)/[^"'\s]+)["']""").findAll(resBody)
-                    for (r2 in r2Matches) {
-                        val r2Url = r2.groupValues[1].replace("&amp;", "&")
-                        val isMkv = r2Url.contains(".mkv", ignoreCase = true) || !r2Url.contains(".mp4", ignoreCase = true)
-                        results.add(
-                            StreamSource(
-                                quality = qualityLabel,
-                                format = if (isMkv) "MKV" else "MP4",
-                                url = r2Url,
-                                headers = mapOf("User-Agent" to mobileUserAgent),
-                                directFile = true,
-                                codec = if (is4k) "HEVC" else "x264",
-                                label = "4KHDHub Direct Cloud ($qualityLabel)",
-                                provider = "fourkhdhub",
-                                isLockerUrl = false
-                            )
+            val searchBody = if (resBody.isNotBlank()) resBody else body
+
+            var pixelSource: StreamSource? = null
+            val pdMatch = Regex("""https?://pixeldrain\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)""").find(searchBody)
+            if (pdMatch != null) {
+                val fileId = pdMatch.groupValues[1]
+                pixelSource = StreamSource(
+                    quality = qualityLabel,
+                    format = "MKV",
+                    url = "https://pixeldrain.com/api/file/$fileId?download",
+                    headers = mapOf("User-Agent" to mobileUserAgent),
+                    directFile = true,
+                    codec = if (is4k) "HEVC" else "x264",
+                    label = "Server 1 (PixelServer)",
+                    provider = "fourkhdhub",
+                    isLockerUrl = false
+                )
+            }
+
+            var gpdlSource: StreamSource? = null
+            val gpdlMatch = Regex("""href=["'](https?://[^"'\s]*gpdl\.[^"'\s]+/[^"'\s]*)["']""").find(searchBody)
+            if (gpdlMatch != null) {
+                val gpdlUrl = gpdlMatch.groupValues[1]
+                try {
+                    val gpdlReq = Request.Builder()
+                        .url(gpdlUrl)
+                        .header("User-Agent", mobileUserAgent)
+                        .header("Referer", resolverUrl ?: hubUrl)
+                        .build()
+                    val gpdlResp = client.newCall(gpdlReq).execute()
+                    val finalHttpUrl = gpdlResp.request.url
+                    val finalUrlStr = finalHttpUrl.toString()
+                    val linkParam = finalHttpUrl.queryParameter("link")
+                    val directGoogleUrl = if (!linkParam.isNullOrBlank() && (linkParam.startsWith("http://") || linkParam.startsWith("https://"))) {
+                        linkParam
+                    } else if (finalUrlStr.contains("video-downloads.googleusercontent.com")) {
+                        finalUrlStr
+                    } else null
+
+                    if (!directGoogleUrl.isNullOrBlank()) {
+                        gpdlSource = StreamSource(
+                            quality = qualityLabel,
+                            format = "MKV",
+                            url = directGoogleUrl,
+                            headers = mapOf("User-Agent" to mobileUserAgent),
+                            directFile = true,
+                            codec = if (is4k) "HEVC" else "x264",
+                            label = "Server 2 (10Gbps Google Direct)",
+                            provider = "fourkhdhub",
+                            isLockerUrl = false
                         )
                     }
+                } catch (_: Exception) {}
+            }
 
-                    val hbPlayMatches = Regex("""href=["']https?://[^"']*hbplay[^"']*\?u=([a-zA-Z0-9+/=_-]+)["']""").findAll(resBody)
-                    for (hb in hbPlayMatches) {
-                        val decodedR2 = safeBase64DecodeToString(hb.groupValues[1]).replace("&amp;", "&")
-                        if (decodedR2.startsWith("http") && results.none { it.url == decodedR2 }) {
-                            results.add(
-                                StreamSource(
-                                    quality = qualityLabel,
-                                    format = if (decodedR2.contains(".mkv")) "MKV" else "MP4",
-                                    url = decodedR2,
-                                    headers = mapOf("User-Agent" to mobileUserAgent),
-                                    directFile = true,
-                                    codec = if (is4k) "HEVC" else "x264",
-                                    label = "4KHDHub Direct CDN ($qualityLabel)",
-                                    provider = "fourkhdhub",
-                                    isLockerUrl = false
-                                )
-                            )
-                        }
-                    }
+            when (serverTarget) {
+                "server1" -> {
+                    if (pixelSource != null) results.add(pixelSource)
+                    else if (gpdlSource != null) results.add(gpdlSource)
+                }
+                "server2" -> {
+                    if (gpdlSource != null) results.add(gpdlSource)
+                    else if (pixelSource != null) results.add(pixelSource)
+                }
+                else -> {
+                    if (pixelSource != null) results.add(pixelSource)
+                    if (gpdlSource != null) results.add(gpdlSource)
+                }
+            }
 
-                    val workersMatches = Regex("""href=["'](https?://[^"'\s]+\.workers\.dev/[^"'\s]+)["']""").findAll(resBody)
-                    for (w in workersMatches) {
-                        val wUrl = w.groupValues[1].replace("&amp;", "&")
-                        results.add(
-                            StreamSource(
-                                quality = qualityLabel,
-                                format = "MKV",
-                                url = wUrl,
-                                headers = mapOf("User-Agent" to mobileUserAgent),
-                                directFile = true,
-                                codec = if (is4k) "HEVC" else "x264",
-                                label = "4KHDHub Fast Worker Direct ($qualityLabel)",
-                                provider = "fourkhdhub",
-                                isLockerUrl = false
-                            )
+            if (results.isEmpty()) {
+                val r2Matches = Regex("""href=["'](https?://[^"'\s]*(?:\.r2\.cloudflarestorage\.com|\.r2\.dev)/[^"'\s]+)["']""").findAll(searchBody)
+                for (r2 in r2Matches) {
+                    val r2Url = r2.groupValues[1].replace("&amp;", "&")
+                    val isMkv = r2Url.contains(".mkv", ignoreCase = true) || !r2Url.contains(".mp4", ignoreCase = true)
+                    results.add(
+                        StreamSource(
+                            quality = qualityLabel,
+                            format = if (isMkv) "MKV" else "MP4",
+                            url = r2Url,
+                            headers = mapOf("User-Agent" to mobileUserAgent),
+                            directFile = true,
+                            codec = if (is4k) "HEVC" else "x264",
+                            label = "4KHDHub Direct Cloud ($qualityLabel)",
+                            provider = "fourkhdhub",
+                            isLockerUrl = false
                         )
-                    }
-
-                    val pdMatches2 = Regex("""https?://pixeldrain\.(?:com|dev)/u/([a-zA-Z0-9_-]+)""").findAll(resBody)
-                    for (m in pdMatches2) {
-                        val fileId = m.groupValues[1]
-                        val pdUrl = "https://pixeldrain.com/api/file/$fileId?download"
-                        if (results.none { it.url == pdUrl }) {
-                            results.add(
-                                StreamSource(
-                                    quality = qualityLabel,
-                                    format = "MKV",
-                                    url = pdUrl,
-                                    headers = mapOf("User-Agent" to mobileUserAgent),
-                                    directFile = true,
-                                    codec = if (is4k) "HEVC" else "x264",
-                                    label = "4KHDHub PixelDrain Direct ($qualityLabel)",
-                                    provider = "fourkhdhub",
-                                    isLockerUrl = false
-                                )
-                            )
-                        }
-                    }
+                    )
                 }
             }
         } catch (_: Exception) {}

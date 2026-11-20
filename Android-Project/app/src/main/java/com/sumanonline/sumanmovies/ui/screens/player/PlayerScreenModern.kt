@@ -11,6 +11,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -99,6 +106,7 @@ import coil.compose.AsyncImage
 import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
+import com.sumanonline.sumanmovies.data.models.StreamMirror
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.getDisplayCategory
@@ -499,16 +507,10 @@ fun MoviePlayerScreen(
             )
         }
 
-        val isBusy = playbackState.isBuffering || uiState.isLoadingStreams || uiState.resolvingStreamUrl != null
-
-        if (isBusy) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = goldenAccent)
-            }
-        }
+        ModernPlayerLoader(
+            uiState = uiState,
+            playbackState = playbackState
+        )
 
         AnimatedVisibility(
             visible = uiState.showControls,
@@ -608,7 +610,7 @@ fun MoviePlayerScreen(
 
                 }
 
-                if (!isBusy) {
+                if (!playbackState.isBuffering) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -1064,16 +1066,10 @@ fun SeriesPlayerScreen(
             )
         }
 
-        val isBusy = playbackState.isBuffering || uiState.isLoadingStreams || uiState.resolvingStreamUrl != null
-
-        if (isBusy) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = goldenAccent)
-            }
-        }
+        ModernPlayerLoader(
+            uiState = uiState,
+            playbackState = playbackState
+        )
 
         AnimatedVisibility(
             visible = uiState.showControls,
@@ -1192,7 +1188,7 @@ fun SeriesPlayerScreen(
                     }
                 }
 
-                if (!isBusy) {
+                if (!playbackState.isBuffering) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -2300,7 +2296,13 @@ private fun DrawersAndDialogs(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        StreamingServer.entries.forEach { server ->
+                        val isAnime = uiState.mediaType == MediaType.ANIME ||
+                            uiState.selectedServer == StreamingServer.REANIME ||
+                            uiState.drawerSelectedServer == StreamingServer.REANIME ||
+                            uiState.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
+                            uiState.mediaId.startsWith("reanime:") ||
+                            com.sumanonline.sumanmovies.data.models.isAnimeCandidate(uiState.mediaTitle, uiState.mediaType, null, uiState.mediaId)
+                        StreamingServer.getAvailableServers(isAnime, uiState.serverStreamsMap.containsKey(StreamingServer.REANIME)).forEach { server ->
                             val isViewed = (uiState.drawerSelectedServer == server)
                             val isPlaying = (uiState.selectedServer == server && uiState.currentStream != null)
                             val isLoading = uiState.loadingServers.contains(server)
@@ -2529,7 +2531,9 @@ private fun DrawersAndDialogs(
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         items(streamsForQuality) { stream ->
-                                            val isSelected = uiState.currentStream?.url == stream.url
+                                            val isSelected = (uiState.currentStream?.url == stream.url) ||
+                                                (!uiState.currentStream?.title.isNullOrBlank() && uiState.currentStream?.title == stream.title) ||
+                                                (uiState.currentStream?.mirrors?.any { it.url == stream.url } == true)
                                             val rawTitle = stream.getDisplayTitle(currentServer)
                                             val fmt = stream.format.uppercase().trim()
                                             val formattedTitle = if (rawTitle.startsWith(fmt, ignoreCase = true)) {
@@ -2538,71 +2542,214 @@ private fun DrawersAndDialogs(
                                                 "$fmt $rawTitle"
                                             }
 
-                                            Row(
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(if (isSelected) goldenAccent.copy(alpha = 0.15f) else Color(0xFF141720))
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(if (isSelected) goldenAccent.copy(alpha = 0.12f) else Color(0xFF141720))
                                                     .border(
                                                         BorderStroke(
                                                             1.dp,
                                                             if (isSelected) goldenAccent else Color.White.copy(alpha = 0.08f)
                                                         ),
-                                                        RoundedCornerShape(8.dp)
+                                                        RoundedCornerShape(10.dp)
                                                     )
-                                                    .clickable {
-                                                        viewModel.selectStreamFromDrawer(stream)
-                                                    }
-                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .padding(10.dp)
                                             ) {
-                                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                                    Text(
-                                                        text = formattedTitle,
-                                                        color = if (isSelected) goldenAccent else Color.White,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    if (!stream.audioLangs.isNullOrBlank()) {
-                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            viewModel.selectStreamFromDrawer(stream)
+                                                        },
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                                         Text(
-                                                            text = stream.audioLangs,
-                                                            color = Color(0xFF9CA3AF),
-                                                            fontSize = 9.sp,
+                                                            text = formattedTitle,
+                                                            color = if (isSelected) goldenAccent else Color.White,
+                                                            fontSize = 11.5.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
+                                                        )
+
+                                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                        ) {
+                                                            if (!stream.sizeFormatted.isNullOrBlank()) {
+                                                                Text(
+                                                                    text = stream.sizeFormatted,
+                                                                    color = goldenAccent,
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    modifier = Modifier
+                                                                        .background(goldenAccent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+                                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                            if (!stream.codec.isNullOrBlank()) {
+                                                                Text(
+                                                                    text = stream.codec,
+                                                                    color = Color(0xFF38BDF8),
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    modifier = Modifier
+                                                                        .background(Color(0xFF38BDF8).copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+                                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                            if (!stream.sourceQualityTag.isNullOrBlank()) {
+                                                                Text(
+                                                                    text = stream.sourceQualityTag,
+                                                                    color = Color(0xFF34D399),
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    modifier = Modifier
+                                                                        .background(Color(0xFF34D399).copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+                                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                        }
+
+                                                        if (!stream.audioLangs.isNullOrBlank()) {
+                                                            Spacer(modifier = Modifier.height(3.dp))
+                                                            Text(
+                                                                text = stream.audioLangs,
+                                                                color = Color(0xFF9CA3AF),
+                                                                fontSize = 9.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+
+                                                    if (isSelected) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "PLAYING",
+                                                                color = goldenAccent,
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                            Icon(
+                                                                imageVector = Icons.Default.Check,
+                                                                contentDescription = "Playing",
+                                                                tint = goldenAccent,
+                                                                modifier = Modifier.size(14.dp)
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Icon(
+                                                            imageVector = Icons.Default.PlayArrow,
+                                                            contentDescription = "Switch",
+                                                            tint = Color(0xFF9CA3AF),
+                                                            modifier = Modifier.size(16.dp)
                                                         )
                                                     }
                                                 }
 
-                                                if (isSelected) {
+                                                if (stream.mirrors.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.height(8.dp))
                                                     Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Text(
-                                                            text = "PLAYING",
-                                                            color = goldenAccent,
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.Check,
-                                                            contentDescription = "Playing",
-                                                            tint = goldenAccent,
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
+                                                        stream.mirrors.forEachIndexed { mirrorIdx, mirror ->
+                                                            val isMirrorActive = isSelected && (
+                                                                (uiState.currentStream?.mirrorName != null && uiState.currentStream?.mirrorName == mirror.name) ||
+                                                                (uiState.currentStream?.mirrorName == null && mirrorIdx == 0)
+                                                            )
+                                                            val isMirrorResolving = uiState.resolvingStreamUrl == mirror.url
+
+                                                            val serverLabel = when {
+                                                                mirror.name.contains("Server 1", ignoreCase = true) -> "Server 1"
+                                                                mirror.name.contains("Server 2", ignoreCase = true) -> "Server 2"
+                                                                mirror.name.contains("Server 3", ignoreCase = true) -> "Server 3"
+                                                                else -> mirror.name
+                                                            }
+                                                            val serverSub = when {
+                                                                mirror.name.contains("PixelServer", ignoreCase = true) || mirror.name.contains("PixelDrain", ignoreCase = true) -> "PixelServer"
+                                                                mirror.name.contains("10Gbps", ignoreCase = true) -> "10Gbps Google"
+                                                                mirror.name.contains("HubDrive", ignoreCase = true) -> "HubDrive Direct"
+                                                                else -> ""
+                                                            }
+
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .clip(RoundedCornerShape(6.dp))
+                                                                    .background(
+                                                                        if (isMirrorActive) goldenAccent.copy(alpha = 0.22f)
+                                                                        else Color(0xFF1B1F2A)
+                                                                    )
+                                                                    .border(
+                                                                        BorderStroke(
+                                                                            1.dp,
+                                                                            if (isMirrorActive) goldenAccent
+                                                                            else Color.White.copy(alpha = 0.1f)
+                                                                        ),
+                                                                        RoundedCornerShape(6.dp)
+                                                                    )
+                                                                    .clickable(enabled = !isMirrorResolving) {
+                                                                        viewModel.selectStreamMirror(stream, mirror)
+                                                                    }
+                                                                    .padding(vertical = 5.dp, horizontal = 2.dp),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                if (isMirrorResolving) {
+                                                                    CircularProgressIndicator(
+                                                                        modifier = Modifier.size(12.dp),
+                                                                        strokeWidth = 1.5.dp,
+                                                                        color = goldenAccent
+                                                                    )
+                                                                } else {
+                                                                    Column(
+                                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                                        verticalArrangement = Arrangement.Center
+                                                                    ) {
+                                                                        Row(
+                                                                            verticalAlignment = Alignment.CenterVertically,
+                                                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                                        ) {
+                                                                            if (isMirrorActive) {
+                                                                                Icon(
+                                                                                    imageVector = Icons.Default.Check,
+                                                                                    contentDescription = null,
+                                                                                    tint = goldenAccent,
+                                                                                    modifier = Modifier.size(9.dp)
+                                                                                )
+                                                                            }
+                                                                            Text(
+                                                                                text = serverLabel,
+                                                                                color = if (isMirrorActive) goldenAccent else Color.White,
+                                                                                fontSize = 9.5.sp,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                maxLines = 1
+                                                                            )
+                                                                        }
+                                                                        if (serverSub.isNotBlank()) {
+                                                                            Text(
+                                                                                text = serverSub,
+                                                                                color = if (isMirrorActive) goldenAccent.copy(alpha = 0.85f) else Color(0xFF9CA3AF),
+                                                                                fontSize = 7.5.sp,
+                                                                                maxLines = 1,
+                                                                                overflow = TextOverflow.Ellipsis
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
-                                                } else {
-                                                    Icon(
-                                                        imageVector = Icons.Default.PlayArrow,
-                                                        contentDescription = "Switch",
-                                                        tint = Color(0xFF9CA3AF),
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
                                                 }
                                             }
                                         }
@@ -2886,5 +3033,187 @@ private fun PlayerProviderBadge(
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.3.sp
         )
+    }
+}
+
+
+@Composable
+private fun ModernPlayerLoader(
+    uiState: PlayerUiState,
+    playbackState: PlayerPlaybackState,
+    modifier: Modifier = Modifier
+) {
+    val isBusy = playbackState.isBuffering || uiState.isLoadingStreams || uiState.resolvingStreamUrl != null
+    if (!isBusy) return
+
+    var bufferingElapsedSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(isBusy) {
+        bufferingElapsedSeconds = 0
+        while (isBusy) {
+            delay(1000L)
+            bufferingElapsedSeconds++
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "playerLoaderPulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.32f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    val serverTitle = uiState.serverDisplayName ?: uiState.serverName ?: "Server"
+    val isSeries = uiState.mediaType == MediaType.SERIES || uiState.mediaType == MediaType.ANIME || uiState.mediaType == MediaType.DRAMA
+
+    val (primaryStatus, secondaryStatus) = when {
+        !uiState.loadingStageText.isNullOrBlank() -> {
+            val sub = when {
+                uiState.loadingStageText.contains("Episode", ignoreCase = true) -> {
+                    "Loading Episode ${uiState.episodeNumber} • $serverTitle"
+                }
+                uiState.loadingStageText.contains("Host", ignoreCase = true) -> {
+                    val mirrorTag = uiState.currentStream?.mirrorName ?: "Direct Mirror"
+                    "Verifying $serverTitle • $mirrorTag"
+                }
+                uiState.loadingStageText.contains("Video", ignoreCase = true) -> {
+                    val q = uiState.currentStream?.quality ?: "High-Speed Stream"
+                    "Buffering $q • $serverTitle"
+                }
+                else -> "Connecting to $serverTitle"
+            }
+            Pair(uiState.loadingStageText, sub)
+        }
+        uiState.isLoadingStreams && isSeries && uiState.episodeNumber > 0 -> {
+            Pair("Loading new Episode...", "Loading Episode ${uiState.episodeNumber} • $serverTitle")
+        }
+        uiState.isLoadingStreams -> {
+            Pair("Connecting to Server...", "Connecting to $serverTitle")
+        }
+        uiState.resolvingStreamUrl != null -> {
+            val mirrorTag = uiState.currentStream?.mirrorName ?: "Direct Mirror"
+            Pair("Checking Host...", "Verifying $serverTitle • $mirrorTag")
+        }
+        playbackState.isBuffering && playbackState.currentPositionMs <= 1500L -> {
+            when {
+                bufferingElapsedSeconds < 2 -> Pair("Loading Video...", "Preparing video player • $serverTitle")
+                bufferingElapsedSeconds < 5 -> Pair("Connecting to Server...", "Establishing stream connection • $serverTitle")
+                bufferingElapsedSeconds < 8 -> Pair("Checking Host...", "Verifying host CDN & media buffer")
+                else -> Pair("Loading...", "Buffering high-speed stream...")
+            }
+        }
+        playbackState.isBuffering -> {
+            when {
+                bufferingElapsedSeconds < 3 -> Pair("Loading Video...", "Buffering video stream • $serverTitle")
+                else -> Pair("Connecting to Server...", "Optimizing buffer with $serverTitle")
+            }
+        }
+        else -> Pair("Loading...", "Please wait a moment")
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xE610131A))
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.09f)), RoundedCornerShape(18.dp))
+                .padding(horizontal = 26.dp, vertical = 20.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(60.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .scale(pulseScale)
+                        .clip(CircleShape)
+                        .background(goldenAccent.copy(alpha = pulseAlpha))
+                )
+                CircularProgressIndicator(
+                    modifier = Modifier.size(46.dp),
+                    color = goldenAccent.copy(alpha = 0.22f),
+                    strokeWidth = 3.5.dp
+                )
+                CircularProgressIndicator(
+                    modifier = Modifier.size(46.dp),
+                    color = goldenAccent,
+                    strokeWidth = 3.5.dp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = primaryStatus,
+                color = Color.White,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.3.sp
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = secondaryStatus,
+                color = Color(0xFF9CA3AF),
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            val displayTitle = if (isSeries && !uiState.episodeTitle.isNullOrBlank()) {
+                "${uiState.mediaTitle} • ${uiState.episodeTitle}"
+            } else {
+                uiState.mediaTitle
+            }
+
+            if (displayTitle.isNotBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(goldenAccent)
+                    )
+                    Text(
+                        text = displayTitle,
+                        color = Color(0xFFD1D5DB),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
     }
 }
