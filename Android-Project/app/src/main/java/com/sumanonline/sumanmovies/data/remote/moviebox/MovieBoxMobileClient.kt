@@ -22,13 +22,73 @@ import java.util.concurrent.TimeUnit
 class MovieBoxMobileClient(
     private val backendRepository: BackendRepository? = null
 ) {
+    companion object {
+        private fun logD(tag: String, msg: String) {
+            try {
+                android.util.Log.d(tag, msg)
+            } catch (_: Throwable) {
+                println("[$tag] $msg")
+            }
+        }
+
+        private fun logE(tag: String, msg: String, tr: Throwable? = null) {
+            try {
+                if (tr != null) android.util.Log.e(tag, msg, tr)
+                else android.util.Log.e(tag, msg)
+            } catch (_: Throwable) {
+                System.err.println("[$tag] $msg" + if (tr != null) " - ${tr.message}" else "")
+            }
+        }
+
+        fun safeFloat(obj: JsonObject, vararg fields: String): Float? {
+            for (field in fields) {
+                val elem = obj.get(field) ?: continue
+                if (elem.isJsonNull) continue
+                try {
+                    val str = elem.asString.trim()
+                    if (str.isNotEmpty()) {
+                        val v = str.toFloatOrNull()
+                        if (v != null) return v
+                    }
+                } catch (_: Exception) {}
+            }
+            return null
+        }
+
+        fun safeInt(obj: JsonObject, vararg fields: String, default: Int = 0): Int {
+            for (field in fields) {
+                val elem = obj.get(field) ?: continue
+                if (elem.isJsonNull) continue
+                try {
+                    val str = elem.asString.trim()
+                    if (str.isNotEmpty()) {
+                        val v = str.toIntOrNull()
+                        if (v != null) return v
+                    }
+                } catch (_: Exception) {}
+            }
+            return default
+        }
+
+        fun safeLong(obj: JsonObject, vararg fields: String, default: Long = 0L): Long {
+            for (field in fields) {
+                val elem = obj.get(field) ?: continue
+                if (elem.isJsonNull) continue
+                try {
+                    val str = elem.asString.trim()
+                    if (str.isNotEmpty()) {
+                        val v = str.toLongOrNull()
+                        if (v != null) return v
+                    }
+                } catch (_: Exception) {}
+            }
+            return default
+        }
+    }
+
     private val hostPool = listOf(
         "https://api6.aoneroom.com",
-        "https://api5.aoneroom.com",
-        "https://api4.aoneroom.com",
         "https://api4sg.aoneroom.com",
-        "https://api3.aoneroom.com",
-        "https://api6sg.aoneroom.com",
         "https://api.inmoviebox.com"
     )
 
@@ -127,11 +187,11 @@ class MovieBoxMobileClient(
                     if (resp.isSuccessful) {
                         activeHostIndex = idx
                         val text = resp.body?.string() ?: "{}"
-                        android.util.Log.d("MovieBox", "Success on $url: ${text.take(100)}")
+                        logD("MovieBox", "Success on $url: ${text.take(100)}")
                         return@withContext gson.fromJson(text, JsonObject::class.java)
                     } else {
                         val errBody = resp.body?.string() ?: ""
-                        android.util.Log.e("MovieBox", "Host $base failed with code ${resp.code}: $errBody")
+                        logE("MovieBox", "Host $base failed with code ${resp.code}: $errBody")
                         if (resp.code == 401) {
                             authToken = null
                         }
@@ -139,11 +199,11 @@ class MovieBoxMobileClient(
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("MovieBox", "Exception on $url", e)
+                logE("MovieBox", "Exception on $url", e)
                 lastErr = e.message ?: "Unknown fetch error"
             }
         }
-        android.util.Log.e("MovieBox", "All hosts failed. Last: $lastErr")
+        logE("MovieBox", "All hosts failed. Last: $lastErr")
         throw IllegalStateException("All MovieBox hosts failed. Last error: $lastErr")
     }
 
@@ -154,7 +214,7 @@ class MovieBoxMobileClient(
     ): List<MediaItem> = withContext(Dispatchers.IO) {
         try {
             val token = ensureSession()
-            android.util.Log.d("MovieBox", "Got session token: ${token.take(15)}...")
+            logD("MovieBox", "Got session token: ${token.take(15)}...")
 
             val payloadV2 = JsonObject().apply {
                 addProperty("keyword", query)
@@ -168,49 +228,67 @@ class MovieBoxMobileClient(
                 null
             }
 
-            var jsonArray: JsonArray? = null
+            val subjectElements = mutableListOf<JsonObject>()
             if (res != null) {
                 val dataObj = res.getAsJsonObject("data") ?: res
                 val resultsArr = dataObj.getAsJsonArray("results")
                 if (resultsArr != null && resultsArr.size() > 0) {
-                    jsonArray = resultsArr[0].asJsonObject.getAsJsonArray("subjects")
+                    for (elem in resultsArr) {
+                        if (!elem.isJsonObject) continue
+                        val subs = elem.asJsonObject.getAsJsonArray("subjects")
+                        if (subs != null) {
+                            for (s in subs) {
+                                if (s.isJsonObject) subjectElements.add(s.asJsonObject)
+                            }
+                        }
+                    }
                 }
-                if (jsonArray == null || jsonArray.size() == 0) {
-                    jsonArray = dataObj.getAsJsonArray("items") ?: dataObj.getAsJsonArray("list")
+                if (subjectElements.isEmpty()) {
+                    val fallback = dataObj.getAsJsonArray("items") ?: dataObj.getAsJsonArray("list")
+                    fallback?.forEach { if (it.isJsonObject) subjectElements.add(it.asJsonObject) }
                 }
             }
 
-            if (jsonArray == null || jsonArray.size() == 0) {
+            if (subjectElements.isEmpty()) {
                 val payloadV1 = JsonObject().apply {
                     addProperty("keyword", query)
                     addProperty("page", page)
                     addProperty("perPage", 20)
                 }
-                res = requestHosts("POST", "/wefeed-mobile-bff/subject-api/search", gson.toJson(payloadV1), token)
-                val dataObj = res.getAsJsonObject("data") ?: res
-                jsonArray = dataObj.getAsJsonArray("items")
-                    ?: dataObj.getAsJsonArray("list")
-                    ?: res.getAsJsonArray("items")
+                res = try {
+                    requestHosts("POST", "/wefeed-mobile-bff/subject-api/search", gson.toJson(payloadV1), token)
+                } catch (_: Exception) {
+                    null
+                }
+                if (res != null) {
+                    val dataObj = res.getAsJsonObject("data") ?: res
+                    val fallback = dataObj.getAsJsonArray("items")
+                        ?: dataObj.getAsJsonArray("list")
+                        ?: res.getAsJsonArray("items")
+                    fallback?.forEach { if (it.isJsonObject) subjectElements.add(it.asJsonObject) }
+                }
             }
 
-            val list = jsonArray ?: return@withContext emptyList()
+            val list = subjectElements
+            logD("MovieBox", "search '$query': total subjectElements = ${list.size}")
             val items = mutableListOf<MediaItem>()
             val seenIds = HashSet<String>()
-            for (element in list) {
-                if (!element.isJsonObject) continue
-                val obj = element.asJsonObject
+            for (obj in list) {
                 val hasResource = if (obj.has("hasResource")) obj.get("hasResource").asBoolean else true
-                if (!hasResource) continue
+                if (!hasResource) {
+                    logD("MovieBox", "Skipped item ${obj.get("title")?.asString} because hasResource=false")
+                    continue
+                }
                 val id = obj.get("subjectId")?.asString ?: obj.get("id")?.asString ?: continue
-                val seNum = if (obj.has("season") && !obj.get("season").isJsonNull) obj.get("season").asInt else if (obj.has("se") && !obj.get("se").isJsonNull) obj.get("se").asInt else null
+                val seNum = safeInt(obj, "season", "se", default = 0).takeIf { it > 0 }
                 val uniqueId = if (seNum != null && seNum > 0) "$id:s$seNum" else id
                 if (!seenIds.add(uniqueId)) continue
                 val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: "Untitled"
-                val sType = obj.get("subjectType")?.asInt ?: obj.get("stype")?.asInt ?: 1
+                val sType = safeInt(obj, "subjectType", "stype", default = 1)
                 val isSeries = sType == 2
                 val year = obj.get("releaseDate")?.asString?.take(4) ?: obj.get("year")?.asString
                 val cover = extractCoverUrl(obj)
-                val score = obj.get("score")?.asFloat ?: obj.get("imdbRatingValue")?.asFloat
+                val score = safeFloat(obj, "score", "imdbRatingValue")
 
                 items.add(
                     MediaItem(
@@ -225,7 +303,8 @@ class MovieBoxMobileClient(
                 )
             }
             items
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            logE("MovieBox", "search failed for '$query'", e)
             emptyList()
         }
     }
@@ -279,14 +358,14 @@ class MovieBoxMobileClient(
 
             val idStr = subject.get("subjectId")?.asString ?: subject.get("id")?.asString ?: cleanId
             val title = subject.get("title")?.asString ?: subject.get("name")?.asString ?: "Untitled"
-            val sType = subject.get("subjectType")?.asInt ?: subject.get("stype")?.asInt ?: 1
+            val sType = safeInt(subject, "subjectType", "stype", default = 1)
             val mediaType = if (sType == 2) MediaType.SERIES else MediaType.MOVIE
 
             val rawYear = subject.get("releaseDate")?.asString ?: subject.get("year")?.asString ?: ""
             val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(rawYear)?.value
             val description = subject.get("description")?.asString ?: subject.get("intro")?.asString
             val cover = extractCoverUrl(subject)
-            val rating = subject.get("score")?.asFloat ?: subject.get("imdbRatingValue")?.asFloat
+            val rating = safeFloat(subject, "score", "imdbRatingValue")
 
             val genresList = mutableListOf<String>()
             val gElem = subject.get("genre") ?: subject.get("genres")
@@ -388,7 +467,7 @@ class MovieBoxMobileClient(
             }
             val pad = (4 - (mapped.length % 4)) % 4
             val padded = if (pad in 1..3) mapped + "=".repeat(pad) else mapped
-            val bytes = android.util.Base64.decode(padded, android.util.Base64.DEFAULT)
+            val bytes = java.util.Base64.getDecoder().decode(padded)
             val jsonStr = String(bytes, Charsets.UTF_8)
             val json = gson.fromJson(jsonStr, JsonObject::class.java)
             val statements = json.getAsJsonArray("Statement")
@@ -414,7 +493,7 @@ class MovieBoxMobileClient(
             var clean = token.replace('-', '+').replace('_', '/')
             val pad = (4 - (clean.length % 4)) % 4
             if (pad in 1..3) clean += "=".repeat(pad)
-            val bytes = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+            val bytes = java.util.Base64.getDecoder().decode(clean)
             val urlStr = String(bytes, Charsets.UTF_8)
             toPlayableManifestUrl(urlStr)
         } catch (_: Exception) {
@@ -464,6 +543,38 @@ class MovieBoxMobileClient(
         }
 
         return streamUrl
+    }
+
+    private fun normalizeAudioLanguage(name: String, lanCode: String? = null, fallback: String = "English"): String {
+        val lower = name.trim().lowercase()
+        val code = lanCode?.trim()?.lowercase()
+        return when {
+            lower.contains("hindi") || lower.contains("हिन्दी") || code == "hi" || code == "hin" -> "Hindi"
+            lower.contains("tamil") || lower.contains("தமிழ்") || code == "ta" || code == "tam" -> "Tamil"
+            lower.contains("telugu") || lower.contains("తెలుగు") || code == "te" || code == "tel" -> "Telugu"
+            lower.contains("malayalam") || lower.contains("മലയാളം") || code == "ml" || code == "mal" -> "Malayalam"
+            lower.contains("kannada") || lower.contains("ಕನ್ನಡ") || code == "kn" || code == "kan" -> "Kannada"
+            lower.contains("bengali") || lower.contains("বাংলা") || code == "bn" || code == "ben" -> "Bengali"
+            lower.contains("marathi") || lower.contains("मराठी") || code == "mr" || code == "mar" -> "Marathi"
+            lower.contains("punjabi") || lower.contains("ਪੰਜਾਬੀ") || code == "pa" || code == "pan" -> "Punjabi"
+            lower.contains("urdu") || lower.contains("اردو") || code == "ur" || code == "urd" -> "Urdu"
+            lower.contains("gujarati") || code == "gu" || code == "guj" -> "Gujarati"
+            lower.contains("spanish") || lower.contains("español") || lower.contains("esla") || code == "es" || code == "spa" -> "Spanish"
+            lower.contains("portuguese") || lower.contains("português") || lower.contains("ptbr") || code == "pt" || code == "por" -> "Portuguese"
+            lower.contains("korean") || lower.contains("한국어") || code == "ko" || code == "kor" -> "Korean"
+            lower.contains("japanese") || lower.contains("日本語") || code == "ja" || code == "jpn" -> "Japanese"
+            lower.contains("chinese") || lower.contains("中文") || code == "zh" || code == "chi" -> "Chinese"
+            lower.contains("french") || lower.contains("français") || code == "fr" || code == "fre" -> "French"
+            lower.contains("german") || lower.contains("deutsch") || code == "de" || code == "ger" -> "German"
+            lower.contains("russian") || lower.contains("русский") || code == "ru" || code == "rus" -> "Russian"
+            lower.contains("arabic") || lower.contains("عربي") || code == "ar" || code == "ara" -> "Arabic"
+            lower.contains("indonesian") || code == "id" || code == "ind" -> "Indonesian"
+            lower.contains("thai") || code == "th" || code == "tha" -> "Thai"
+            lower.contains("vietnamese") || code == "vi" || code == "vie" -> "Vietnamese"
+            lower.contains("english") || code == "en" || code == "eng" -> "English"
+            name.isNotBlank() && !lower.contains("original") && !lower.contains("dub") && name != "Unknown" -> name.trim()
+            else -> fallback
+        }
     }
 
     private fun isDeprecationNoticeUrl(url: String): Boolean {
@@ -573,6 +684,8 @@ class MovieBoxMobileClient(
             data class DubTarget(val id: String, val langName: String, val isOriginal: Boolean)
             val dubTargets = mutableListOf<DubTarget>()
 
+            var detectedOrigLang = "Original"
+
             try {
                 val detailsRes = requestHosts("GET", "/wefeed-mobile-bff/subject-api/get?subjectId=$cleanId", null, token)
                 val detData = detailsRes.getAsJsonObject("data") ?: detailsRes
@@ -581,6 +694,15 @@ class MovieBoxMobileClient(
                 if (sType != null) {
                     isMovie = (sType != 2)
                 }
+
+                val origLangRaw = subjectObj.get("originalLanguage")?.asString
+                    ?: subjectObj.get("language")?.asString
+                    ?: subjectObj.get("lanName")?.asString
+                    ?: detData.get("language")?.asString
+                if (!origLangRaw.isNullOrBlank()) {
+                    detectedOrigLang = normalizeAudioLanguage(origLangRaw, origLangRaw, fallback = "Original")
+                }
+
                 val dubsArr = detData.getAsJsonArray("dubs") ?: subjectObj.getAsJsonArray("dubs")
                 if (dubsArr != null && dubsArr.size() > 0) {
                     for (elem in dubsArr) {
@@ -589,14 +711,13 @@ class MovieBoxMobileClient(
                         val rawName = dObj.get("lanName")?.asString ?: dObj.get("language")?.asString ?: dObj.get("lang")?.asString ?: "Unknown"
                         val isOrig = dObj.get("original")?.asBoolean ?: false
                         val cleanLang = when {
-                            rawName.contains("Original", ignoreCase = true) || isOrig -> "English"
-                            rawName.contains("Hindi", ignoreCase = true) -> "Hindi"
-                            rawName.contains("Bengali", ignoreCase = true) -> "Bengali"
-                            rawName.contains("Tamil", ignoreCase = true) -> "Tamil"
-                            rawName.contains("Telugu", ignoreCase = true) -> "Telugu"
-                            rawName.contains("Spanish", ignoreCase = true) || rawName.contains("esla", ignoreCase = true) -> "Spanish"
-                            rawName.contains("Portuguese", ignoreCase = true) || rawName.contains("ptbr", ignoreCase = true) -> "Portuguese"
-                            else -> rawName.replace("dub", "", ignoreCase = true).trim().ifBlank { "Dub" }
+                            rawName.contains("Original", ignoreCase = true) || isOrig -> {
+                                val specific = normalizeAudioLanguage(rawName, dObj.get("lan")?.asString, fallback = detectedOrigLang)
+                                if (specific == "Original" || specific == "English") {
+                                    if (detectedOrigLang != "Original") detectedOrigLang else "English"
+                                } else specific
+                            }
+                            else -> normalizeAudioLanguage(rawName, dObj.get("lan")?.asString, fallback = "Dub")
                         }
                         if (isOrig || originalAudioSubjectId == null) {
                             originalAudioSubjectId = dubId
@@ -606,14 +727,17 @@ class MovieBoxMobileClient(
                 }
             } catch (_: Exception) {}
 
+            val defaultCleanLang = if (detectedOrigLang != "Original") detectedOrigLang else "English"
             if (dubTargets.none { it.id == cleanId }) {
-                dubTargets.add(0, DubTarget(cleanId, "English", true))
+                dubTargets.add(0, DubTarget(cleanId, defaultCleanLang, true))
             }
+
+            val primaryTargetLang = dubTargets.firstOrNull { it.id == cleanId }?.langName ?: defaultCleanLang
 
             val queryTargets = mutableListOf<DubTarget>()
             dubTargets.firstOrNull { it.id == cleanId }?.let { queryTargets.add(it) }
             for (t in dubTargets) {
-                if (queryTargets.none { it.id == t.id } && queryTargets.size < 4) {
+                if (queryTargets.none { it.id == t.id } && queryTargets.size < 6) {
                     queryTargets.add(t)
                 }
             }
@@ -647,13 +771,11 @@ class MovieBoxMobileClient(
                             for (s in streamsArr) {
                                 val sObj = s.asJsonObject
                                 val streamUrl = sObj.get("url")?.asString ?: continue
-                                val streamDuration = sObj.get("duration")?.asLong ?: 0L
+                                val streamDuration = safeLong(sObj, "duration", default = 0L)
                                 val streamResourceId = sObj.get("id")?.asString ?: sObj.get("resourceId")?.asString
                                 if (!streamResourceId.isNullOrBlank()) {
                                     collectedResourcePairs.add(Pair(targetId, streamResourceId))
                                 }
-
-                                val is15MinCapped = if (isMovie) (streamDuration in 1..915) else (streamDuration in 1..300)
 
                                 val rawCookie = sObj.get("signCookie")?.asString
                                     ?: sObj.get("cookie")?.asString
@@ -662,14 +784,17 @@ class MovieBoxMobileClient(
                                 val effectiveUrl = resolveMasterManifest(streamUrl, rawCookie)
                                 if (isDeprecationNoticeUrl(effectiveUrl) || !effectiveUrl.startsWith("http")) continue
 
+                                val is15MinCapped = (isMovie && (streamDuration in 1..915 || effectiveUrl.contains("/preview/"))) ||
+                                        (!isMovie && (streamDuration in 1..300 || effectiveUrl.contains("/preview/")))
+
                                 val isDash = effectiveUrl.contains(".mpd") || effectiveUrl.contains("/dash/")
                                 val format = if (isDash) "DASH" else "HLS"
                                 val codec = sObj.get("codecName")?.asString ?: sObj.get("codec")?.asString ?: "h264"
-                                val totalSizeBytes = sObj.get("size")?.asLong ?: 0L
+                                val totalSizeBytes = safeLong(sObj, "size", default = 0L)
 
                                 val headers = mutableMapOf(
                                     "Referer" to "https://sportslive.wine",
-                                    "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)"
+                                    "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)"
                                 )
                                 rawCookie?.let { c ->
                                     val cleanCookie = c.split(';')
@@ -763,10 +888,10 @@ class MovieBoxMobileClient(
                                 val url = dObj.get("url")?.asString ?: continue
                                 if (isDeprecationNoticeUrl(url) || !seenUrls.add(url.substringBefore("?") + "#" + targetLang)) continue
 
-                                val resNum = dObj.get("resolution")?.asString?.filter { it.isDigit() }?.toIntOrNull() ?: 1080
+                                val resNum = safeInt(dObj, "resolution", default = 1080)
                                 if (resNum > 1080 && !supports4k) continue
                                 val resName = "${resNum}p"
-                                val size = dObj.get("size")?.asLong
+                                val size = safeLong(dObj, "size", default = 0L).takeIf { it > 0 }
                                 val cat = when {
                                     resNum >= 2160 -> "2160p / 4K"
                                     resNum >= 1080 -> "1080p"
@@ -775,23 +900,20 @@ class MovieBoxMobileClient(
                                     else -> "Other"
                                 }
                                 val formattedSize = size?.let { bytes ->
-                                    if (bytes <= 0) null
-                                    else {
-                                        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-                                        val mb = bytes / (1024.0 * 1024.0)
-                                        if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
-                                        else String.format(java.util.Locale.US, "%.0f MB", mb)
-                                    }
+                                    val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+                                    val mb = bytes / (1024.0 * 1024.0)
+                                    if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
+                                    else String.format(java.util.Locale.US, "%.0f MB", mb)
                                 }
 
-                                val dlTitle = "MovieBox Download $resName ($targetLang)"
+                                val dlTitle = "MovieBox Direct $resName ($targetLang)"
                                 streams.add(
                                     StreamSource(
                                         quality = "$resName Download",
                                         format = "MP4",
                                         url = url,
                                         headers = mapOf(
-                                            "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)"
+                                            "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)"
                                         ),
                                         sizeBytes = size,
                                         directFile = true,
@@ -801,7 +923,7 @@ class MovieBoxMobileClient(
                                         audioLangs = targetLang,
                                         title = dlTitle,
                                         sizeFormatted = formattedSize,
-                                        sourceQualityTag = "Download",
+                                        sourceQualityTag = "Full Stream",
                                         category = cat,
                                         isLockerUrl = false
                                     )
@@ -809,41 +931,130 @@ class MovieBoxMobileClient(
                             }
                         }
 
-                        if (streams.any { it.audioLangs == targetLang }) break
+                        if (streams.any { it.audioLangs == targetLang && it.sourceQualityTag == "Full Stream" }) break
                     } catch (_: Exception) {}
                 }
             }
 
-            try {
-                val detailsRes = requestHosts("GET", "/wefeed-mobile-bff/subject-api/get?subjectId=$cleanId", null, token)
-                val detData = detailsRes.getAsJsonObject("data") ?: detailsRes
-                val detectors = detData.getAsJsonArray("resourceDetectors")
-                if (detectors != null && detectors.size() > 0) {
-                    for (dElem in detectors) {
-                        val detector = dElem.asJsonObject
-                        val resList = detector.getAsJsonArray("resolutionList")
-                        val items = mutableListOf<JsonObject>()
-                        if (resList != null && resList.size() > 0) {
-                            for (r in resList) items.add(r.asJsonObject)
-                        } else {
-                            val dlUrl = detector.get("downloadUrl")?.asString
-                            if (!dlUrl.isNullOrBlank() && !isDeprecationNoticeUrl(dlUrl)) {
-                                items.add(detector)
+            for (target in queryTargets) {
+                val targetId = target.id
+                val targetLang = target.langName
+
+                try {
+                    val detailsRes = requestHosts("GET", "/wefeed-mobile-bff/subject-api/get?subjectId=$targetId", null, token)
+                    val detData = detailsRes.getAsJsonObject("data") ?: detailsRes
+                    val detectors = detData.getAsJsonArray("resourceDetectors")
+                    if (detectors != null && detectors.size() > 0) {
+                        for (dElem in detectors) {
+                            val detector = dElem.asJsonObject
+                            val resList = detector.getAsJsonArray("resolutionList")
+                            val items = mutableListOf<JsonObject>()
+                            if (resList != null && resList.size() > 0) {
+                                for (r in resList) items.add(r.asJsonObject)
+                            } else {
+                                val dlUrl = detector.get("downloadUrl")?.asString
+                                if (!dlUrl.isNullOrBlank() && !isDeprecationNoticeUrl(dlUrl)) {
+                                    items.add(detector)
+                                }
+                            }
+
+                            for (item in items) {
+                                val directUrl = item.get("downloadUrl")?.asString
+                                    ?: item.get("resourceLink")?.asString
+                                    ?: item.get("url")?.asString
+                                    ?: continue
+
+                                if (isDeprecationNoticeUrl(directUrl) || !directUrl.startsWith("http")) continue
+                                val base = directUrl.substringBefore("?")
+                                if (!seenUrls.add(base + "#" + targetLang)) continue
+
+                                val resNum = safeInt(item, "resolution", default = extractResolution(directUrl))
+                                if (resNum > 1080 && !supports4k) continue
+                                val resName = when {
+                                    resNum >= 2160 -> "4K Ultra HD"
+                                    resNum >= 1080 -> "1080p Full HD"
+                                    resNum >= 720 -> "720p HD"
+                                    resNum >= 480 -> "480p SD"
+                                    else -> "${resNum}p"
+                                }
+                                val cat = when {
+                                    resNum >= 2160 -> "2160p / 4K"
+                                    resNum >= 1080 -> "1080p"
+                                    resNum >= 720 -> "720p"
+                                    resNum >= 480 -> "480p"
+                                    else -> "Other"
+                                }
+                                val sizeBytes = safeLong(item, "size", default = safeLong(item, "firstSize", default = 0L)).takeIf { it > 0 }
+                                val formattedSize = sizeBytes?.let { bytes ->
+                                    val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+                                    val mb = bytes / (1024.0 * 1024.0)
+                                    if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
+                                    else String.format(java.util.Locale.US, "%.0f MB", mb)
+                                }
+                                val codec = item.get("codecName")?.asString ?: item.get("codec")?.asString ?: "h264"
+
+                                val directHeaders = mapOf(
+                                    "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)"
+                                )
+
+                                val itemDuration = safeLong(item, "duration", "firstDuration", "playDuration", default = 0L)
+                                val isTrailerOrSample = item.get("isTrailer")?.asBoolean == true ||
+                                        item.get("trailer")?.asBoolean == true ||
+                                        (isMovie && itemDuration in 1..90) ||
+                                        (!isMovie && itemDuration in 1..45)
+
+                                val label = if (isTrailerOrSample) "MovieBox Direct $resName ($targetLang) (Trailer)"
+                                            else "MovieBox Direct $resName ($targetLang)"
+
+                                streams.add(
+                                    StreamSource(
+                                        quality = resName,
+                                        format = "MP4",
+                                        url = directUrl,
+                                        headers = directHeaders,
+                                        directFile = true,
+                                        codec = codec,
+                                        label = label,
+                                        provider = "moviebox",
+                                        audioLangs = targetLang,
+                                        title = label,
+                                        sizeBytes = sizeBytes,
+                                        sizeFormatted = formattedSize,
+                                        sourceQualityTag = if (isTrailerOrSample) "Preview" else "Full Stream",
+                                        category = cat,
+                                        isLockerUrl = false
+                                    )
+                                )
                             }
                         }
+                    }
+                } catch (_: Exception) {}
 
-                        for (item in items) {
-                            val directUrl = item.get("downloadUrl")?.asString
-                                ?: item.get("resourceLink")?.asString
-                                ?: item.get("url")?.asString
-                                ?: continue
-
-                            if (isDeprecationNoticeUrl(directUrl) || !directUrl.startsWith("http")) continue
-                            val base = directUrl.substringBefore("?")
-                            if (!seenUrls.add(base)) continue
-
-                            val resNum = item.get("resolution")?.asInt
-                                ?: extractResolution(directUrl)
+                val resourcePath = if (isMovie) {
+                    "/wefeed-mobile-bff/subject-api/resource?subjectId=$targetId&page=1&perPage=20"
+                } else {
+                    val seVal = if (season > 0) season else 1
+                    val epVal = if (episode > 0) episode else 1
+                    "/wefeed-mobile-bff/subject-api/resource?subjectId=$targetId&se=$seVal&ep=$epVal&page=1&perPage=20"
+                }
+                try {
+                    val resObj = requestHosts("GET", resourcePath, null, token)
+                    val resData = resObj.getAsJsonObject("data") ?: resObj
+                    val listArr = resData.getAsJsonArray("list")
+                    if (listArr != null && listArr.size() > 0) {
+                        for (elem in listArr) {
+                            if (!elem.isJsonObject) continue
+                            val item = elem.asJsonObject
+                            val rSe = safeInt(item, "se", default = 0)
+                            val rEp = safeInt(item, "ep", default = 0)
+                            if (!isMovie && season > 0 && episode > 0 && (rSe != season || rEp != episode)) {
+                                continue
+                            }
+                            val link = item.get("resourceLink")?.asString ?: item.get("url")?.asString ?: continue
+                            if (isDeprecationNoticeUrl(link) || !link.startsWith("http")) continue
+                            val base = link.substringBefore("?")
+                            if (!seenUrls.add(base + "#" + targetLang)) continue
+                            val resNum = safeInt(item, "resolution", default = extractResolution(link))
                             if (resNum > 1080 && !supports4k) continue
                             val resName = when {
                                 resNum >= 2160 -> "4K Ultra HD"
@@ -859,123 +1070,51 @@ class MovieBoxMobileClient(
                                 resNum >= 480 -> "480p"
                                 else -> "Other"
                             }
-                            val sizeBytes = item.get("size")?.asLong ?: item.get("firstSize")?.asLong
+                            val sizeBytes = safeLong(item, "size", default = 0L).takeIf { it > 0 }
                             val formattedSize = sizeBytes?.let { bytes ->
-                                if (bytes <= 0) null
-                                else {
-                                    val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-                                    val mb = bytes / (1024.0 * 1024.0)
-                                    if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
-                                    else String.format(java.util.Locale.US, "%.0f MB", mb)
-                                }
+                                val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+                                val mb = bytes / (1024.0 * 1024.0)
+                                if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
+                                else String.format(java.util.Locale.US, "%.0f MB", mb)
                             }
                             val codec = item.get("codecName")?.asString ?: item.get("codec")?.asString ?: "h264"
 
-                            val directHeaders = mapOf(
-                                "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)"
+                            val resHeaders = mapOf(
+                                "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)"
                             )
+
+                            val itemDuration = safeLong(item, "duration", "firstDuration", "playDuration", default = 0L)
+                            val isTrailerOrSample = item.get("isTrailer")?.asBoolean == true ||
+                                    item.get("trailer")?.asBoolean == true ||
+                                    (isMovie && itemDuration in 1..90) ||
+                                    (!isMovie && itemDuration in 1..45)
+
+                            val dlTitle = if (isTrailerOrSample) "MovieBox Direct $resName ($targetLang) (Trailer)"
+                                          else "MovieBox Direct $resName ($targetLang)"
 
                             streams.add(
                                 StreamSource(
                                     quality = resName,
                                     format = "MP4",
-                                    url = directUrl,
-                                    headers = directHeaders,
+                                    url = link,
+                                    headers = resHeaders,
+                                    sizeBytes = sizeBytes,
                                     directFile = true,
                                     codec = codec,
-                                    label = "MovieBox Direct $resName",
+                                    label = dlTitle,
                                     provider = "moviebox",
-                                    audioLangs = "English",
-                                    title = "MovieBox Direct $resName",
-                                    sizeBytes = sizeBytes,
+                                    audioLangs = targetLang,
+                                    title = dlTitle,
                                     sizeFormatted = formattedSize,
-                                    sourceQualityTag = "Direct",
+                                    sourceQualityTag = if (isTrailerOrSample) "Preview" else "Full Stream",
                                     category = cat,
                                     isLockerUrl = false
                                 )
                             )
                         }
                     }
-                }
-            } catch (_: Exception) {}
-
-            val resourcePath = if (isMovie) {
-                "/wefeed-mobile-bff/subject-api/resource?subjectId=$cleanId&page=1&perPage=20"
-            } else {
-                val seVal = if (season > 0) season else 1
-                val epVal = if (episode > 0) episode else 1
-                "/wefeed-mobile-bff/subject-api/resource?subjectId=$cleanId&se=$seVal&ep=$epVal&page=1&perPage=20"
+                } catch (_: Exception) {}
             }
-            try {
-                val resObj = requestHosts("GET", resourcePath, null, token)
-                val resData = resObj.getAsJsonObject("data") ?: resObj
-                val listArr = resData.getAsJsonArray("list")
-                if (listArr != null && listArr.size() > 0) {
-                    for (elem in listArr) {
-                        if (!elem.isJsonObject) continue
-                        val item = elem.asJsonObject
-                        val rSe = item.get("se")?.asInt ?: 0
-                        val rEp = item.get("ep")?.asInt ?: 0
-                        if (!isMovie && season > 0 && episode > 0 && (rSe != season || rEp != episode)) {
-                            continue
-                        }
-                        val link = item.get("resourceLink")?.asString ?: item.get("url")?.asString ?: continue
-                        if (isDeprecationNoticeUrl(link) || !link.startsWith("http")) continue
-                        val base = link.substringBefore("?")
-                        if (!seenUrls.add(base)) continue
-                        val resNum = item.get("resolution")?.asInt ?: extractResolution(link)
-                        if (resNum > 1080 && !supports4k) continue
-                        val resName = when {
-                            resNum >= 2160 -> "4K Ultra HD"
-                            resNum >= 1080 -> "1080p Full HD"
-                            resNum >= 720 -> "720p HD"
-                            resNum >= 480 -> "480p SD"
-                            else -> "${resNum}p"
-                        }
-                        val cat = when {
-                            resNum >= 2160 -> "2160p / 4K"
-                            resNum >= 1080 -> "1080p"
-                            resNum >= 720 -> "720p"
-                            resNum >= 480 -> "480p"
-                            else -> "Other"
-                        }
-                        val sizeBytes = item.get("size")?.asLong
-                        val formattedSize = sizeBytes?.let { bytes ->
-                            if (bytes <= 0) null
-                            else {
-                                val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-                                val mb = bytes / (1024.0 * 1024.0)
-                                if (gb >= 1.0) String.format(java.util.Locale.US, "%.1f GB", gb)
-                                else String.format(java.util.Locale.US, "%.0f MB", mb)
-                            }
-                        }
-                        val codec = item.get("codecName")?.asString ?: item.get("codec")?.asString ?: "h264"
-                        val dlTitle = "MovieBox Direct $resName"
-                        streams.add(
-                            StreamSource(
-                                quality = resName,
-                                format = "MP4",
-                                url = link,
-                                headers = mapOf(
-                                    "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)",
-                                    "Referer" to "https://sportslive.wine"
-                                ),
-                                sizeBytes = sizeBytes,
-                                directFile = true,
-                                codec = codec,
-                                label = dlTitle,
-                                provider = "moviebox",
-                                audioLangs = "Original",
-                                title = dlTitle,
-                                sizeFormatted = formattedSize,
-                                sourceQualityTag = "Direct",
-                                category = cat,
-                                isLockerUrl = false
-                            )
-                        )
-                    }
-                }
-            } catch (_: Exception) {}
 
             val collectedSubs = mutableListOf<SubtitleTrack>()
             val queriedResourceKeys = mutableSetOf<String>()
@@ -1017,13 +1156,13 @@ class MovieBoxMobileClient(
                                 format = "MP4",
                                 url = preVideo,
                                 headers = mapOf(
-                                    "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)"
+                                    "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)"
                                 ),
                                 directFile = true,
                                 codec = "h264",
                                 label = "MovieBox Preview (720p)",
                                 provider = "moviebox",
-                                audioLangs = "English",
+                                audioLangs = primaryTargetLang,
                                 title = "MovieBox Preview Stream",
                                 sourceQualityTag = "Preview",
                                 category = "720p",
@@ -1038,6 +1177,8 @@ class MovieBoxMobileClient(
                 compareByDescending<StreamSource> {
                     if (it.sourceQualityTag != "Preview") 1 else 0
                 }.thenByDescending {
+                    if (it.audioLangs.equals(primaryTargetLang, ignoreCase = true)) 1 else 0
+                }.thenByDescending {
                     when {
                         it.quality.contains("2160") || it.quality.contains("4k", ignoreCase = true) -> 2160
                         it.quality.contains("1080") -> 1080
@@ -1046,16 +1187,16 @@ class MovieBoxMobileClient(
                         else -> 0
                     }
                 }.thenByDescending {
-                    if (it.format.equals("DASH", ignoreCase = true) && it.sourceQualityTag != "Preview") 2
-                    else if (it.directFile || it.format.equals("MP4", ignoreCase = true)) 1
+                    if (it.sourceQualityTag != "Preview" && (it.directFile || it.format.equals("MP4", ignoreCase = true))) 2
+                    else if (it.sourceQualityTag != "Preview" && it.format.equals("DASH", ignoreCase = true)) 1
                     else 0
                 }
             )
 
-            android.util.Log.d("MovieBox", "resolveStreams: total ${streams.size} streams and ${subtitles.size} subs found")
+            logD("MovieBox", "resolveStreams: total ${streams.size} streams and ${subtitles.size} subs found")
             Pair(streams, subtitles)
         } catch (e: Exception) {
-            android.util.Log.e("MovieBox", "resolveStreams error", e)
+            logE("MovieBox", "resolveStreams error", e)
             Pair(emptyList(), emptyList())
         }
     }

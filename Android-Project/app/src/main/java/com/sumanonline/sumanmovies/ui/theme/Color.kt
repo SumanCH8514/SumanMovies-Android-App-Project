@@ -6,12 +6,12 @@ import androidx.compose.ui.graphics.Color
 
 val RawBgDark = Color(0xFF08080A)
 val RawSurfaceDark = Color(0xFF121217)
-val RawCardDark = Color(0xFF1B1B22)
-val RawCardElevated = Color(0xFF24242E)
+val RawCardDark = Color(0xFF16161D)
+val RawCardElevated = Color(0xFF121217)
 val RawTextPrimary = Color(0xFFF3F4F6)
 val RawTextSecondary = Color(0xFF9CA3AF)
 val RawTextMuted = Color(0xFF6B7280)
-val RawBorderDark = Color(0xFF2E2E38)
+val RawBorderDark = Color(0xFF1F1F27)
 
 val RawBgLight = Color(0xFFF1F5F9)
 val RawSurfaceLight = Color(0xFFFFFFFF)

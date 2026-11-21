@@ -66,6 +66,7 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.ui.components.SectionHeader
 import com.sumanonline.sumanmovies.ui.components.VerticalPosterCard
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
@@ -776,11 +777,11 @@ private fun QualityBadge(
         modifier = modifier,
         shape = RoundedCornerShape(4.dp),
         color = CardElevated,
-        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
+        border = BorderStroke(0.5.dp, BorderDark)
     ) {
         Text(
             text = display,
-            color = Color(0xFFE2E8F0),
+            color = TextSecondary,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -801,7 +802,7 @@ private fun CardActionButton(
         onClick = onClick,
         shape = RoundedCornerShape(8.dp),
         color = if (isDestructive) Color(0xFFEF4444).copy(alpha = 0.12f) else CardElevated,
-        border = BorderStroke(0.5.dp, if (isDestructive) Color(0xFFEF4444).copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f)),
+        border = BorderStroke(0.5.dp, if (isDestructive) Color(0xFFEF4444).copy(alpha = 0.35f) else BorderDark),
         modifier = modifier.height(30.dp)
     ) {
         Row(
@@ -835,7 +836,7 @@ private fun ProviderBadge(
         modifier = modifier.height(30.dp),
         shape = RoundedCornerShape(8.dp),
         color = CardElevated,
-        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f))
+        border = BorderStroke(0.5.dp, BorderDark)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -843,7 +844,7 @@ private fun ProviderBadge(
         ) {
             Text(
                 text = provider,
-                color = Color(0xFFCBD5E1),
+                color = TextSecondary,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -864,7 +865,7 @@ private fun FormatBadge(
         "MKV" -> Triple(Color(0xFF4C1D95).copy(alpha = 0.4f), Color(0xFFA78BFA), Color(0xFF7C3AED).copy(alpha = 0.5f))
         "MP4" -> Triple(Color(0xFF1E3A8A).copy(alpha = 0.4f), Color(0xFF60A5FA), Color(0xFF2563EB).copy(alpha = 0.5f))
         "DASH" -> Triple(Color(0xFF78350F).copy(alpha = 0.4f), Color(0xFFFBBF24), Color(0xFFD97706).copy(alpha = 0.5f))
-        else -> Triple(CardElevated, Color(0xFFE2E8F0), Color.White.copy(alpha = 0.15f))
+        else -> Triple(CardElevated, TextSecondary, BorderDark)
     }
     Surface(
         modifier = modifier.height(30.dp),

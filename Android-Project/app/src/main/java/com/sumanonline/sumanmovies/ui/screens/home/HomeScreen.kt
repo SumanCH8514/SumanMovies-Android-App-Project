@@ -268,7 +268,7 @@ fun HomeScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
 
@@ -376,7 +376,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.mediaSectionItem(
             )
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 itemsIndexed(displayItems) { index, item ->
                     VerticalPosterCard(
@@ -386,7 +386,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.mediaSectionItem(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

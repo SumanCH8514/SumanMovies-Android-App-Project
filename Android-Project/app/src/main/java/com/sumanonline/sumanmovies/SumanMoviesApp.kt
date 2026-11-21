@@ -8,7 +8,10 @@ import com.sumanonline.sumanmovies.data.local.AppPreferencesManager
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
+import com.sumanonline.sumanmovies.data.remote.kmdl.KMDLMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesleech.MoviesLeechMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesmod.MoviesModMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
 import com.sumanonline.sumanmovies.data.remote.tmdb.TmdbRepository
 import com.sumanonline.sumanmovies.data.remote.update.AppUpdateManager
@@ -45,6 +48,15 @@ class SumanMoviesApp : Application() {
     lateinit var play4UClient: Play4UMobileClient
         private set
 
+    lateinit var kmdlClient: KMDLMobileClient
+        private set
+
+    lateinit var moviesLeechClient: MoviesLeechMobileClient
+        private set
+
+    lateinit var moviesModClient: MoviesModMobileClient
+        private set
+
     lateinit var downloadManager: AppDownloadManager
         private set
 
@@ -70,10 +82,22 @@ class SumanMoviesApp : Application() {
         fourKHdHubClient = FourKHdHubMobileClient()
         hdHub4uClient = HDHub4uMobileClient()
         play4UClient = Play4UMobileClient()
+        kmdlClient = KMDLMobileClient()
+        moviesLeechClient = MoviesLeechMobileClient()
+        moviesModClient = MoviesModMobileClient()
         downloadManager = AppDownloadManager(this, database.downloadDao(), preferencesManager)
         serverSelectionManager = ServerSelectionManager(this)
         val searchHistoryManager = com.sumanonline.sumanmovies.data.repository.SearchHistoryManager(this)
-        playbackResolver = PlaybackResolver(backendRepository, movieBoxClient, fourKHdHubClient, hdHub4uClient, play4UClient)
+        playbackResolver = PlaybackResolver(
+            backendRepo = backendRepository,
+            movieBoxClient = movieBoxClient,
+            fourKHdHubClient = fourKHdHubClient,
+            hdHub4uClient = hdHub4uClient,
+            play4UClient = play4UClient,
+            kmdlClient = kmdlClient,
+            moviesLeechClient = moviesLeechClient,
+            moviesModClient = moviesModClient
+        )
         mediaRepository = MediaRepository(
             database = database,
             tmdbRepo = tmdbRepository,
@@ -85,7 +109,10 @@ class SumanMoviesApp : Application() {
             downloadManager = downloadManager,
             serverSelectionManager = serverSelectionManager,
             playbackResolver = playbackResolver,
-            searchHistoryManager = searchHistoryManager
+            searchHistoryManager = searchHistoryManager,
+            kmdlClient = kmdlClient,
+            moviesLeechClient = moviesLeechClient,
+            moviesModClient = moviesModClient
         )
     }
 

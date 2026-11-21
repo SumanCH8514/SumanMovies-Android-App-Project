@@ -81,6 +81,16 @@ class AppPreferencesManager(private val context: Context) {
     )
     val autoPlayNextEpisode: StateFlow<Boolean> = _autoPlayNextEpisode.asStateFlow()
 
+    private val _autoSkipIntro = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_SKIP_INTRO, false)
+    )
+    val autoSkipIntro: StateFlow<Boolean> = _autoSkipIntro.asStateFlow()
+
+    private val _autoSkipCredits = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_SKIP_CREDITS, false)
+    )
+    val autoSkipCredits: StateFlow<Boolean> = _autoSkipCredits.asStateFlow()
+
     private val _preferredSubtitleLanguage = MutableStateFlow(
         prefs.getString(KEY_PREFERRED_SUBTITLE_LANG, "English") ?: "English"
     )
@@ -186,6 +196,16 @@ class AppPreferencesManager(private val context: Context) {
     fun setAutoPlayNextEpisode(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_AUTO_PLAY_NEXT, enabled).apply()
         _autoPlayNextEpisode.value = enabled
+    }
+
+    fun setAutoSkipIntro(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_SKIP_INTRO, enabled).apply()
+        _autoSkipIntro.value = enabled
+    }
+
+    fun setAutoSkipCredits(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_SKIP_CREDITS, enabled).apply()
+        _autoSkipCredits.value = enabled
     }
 
     fun setPreferredSubtitleLanguage(lang: String) {
@@ -324,6 +344,8 @@ class AppPreferencesManager(private val context: Context) {
         private const val KEY_APPLY_PALETTE_TO_PLAYER = "key_apply_palette_to_player"
         private const val KEY_SELECTED_LANGUAGE = "key_selected_language"
         private const val KEY_AUTO_PLAY_NEXT = "key_auto_play_next"
+        private const val KEY_AUTO_SKIP_INTRO = "key_auto_skip_intro"
+        private const val KEY_AUTO_SKIP_CREDITS = "key_auto_skip_credits"
         private const val KEY_PREFERRED_SUBTITLE_LANG = "key_preferred_subtitle_lang"
         private const val KEY_PREFERRED_AUDIO_LANG = "key_preferred_audio_lang"
         private const val KEY_SUBTITLES_BY_DEFAULT = "key_subtitles_by_default"

@@ -97,7 +97,7 @@ data class StreamSource(
     val sizeBytes: Long? = null,
     val directFile: Boolean = true,
     val codec: String? = null,
-    val label: String,
+    val label: String = "",
     val provider: String,
     val audioLangs: String? = null,
     val sizeFormatted: String? = null,
@@ -106,8 +106,19 @@ data class StreamSource(
     val mirrorName: String? = null,
     val isLockerUrl: Boolean = false,
     val category: String = "1080p",
-    val mirrors: List<StreamMirror> = emptyList()
-)
+    val mirrors: List<StreamMirror> = emptyList(),
+    val isStreamable: Boolean = true
+) {
+    fun canStream(): Boolean {
+        if (!isStreamable) return false
+        val lowUrl = url.lowercase()
+        val lowFmt = format.lowercase()
+        if (lowUrl.endsWith(".zip") || lowUrl.contains(".zip?") || lowUrl.contains(".mkv.zip") || lowUrl.contains(".rar") || lowFmt == "zip" || lowFmt == "rar") {
+            return false
+        }
+        return true
+    }
+}
 
 data class SubtitleTrack(
     val id: String,

@@ -8,7 +8,10 @@ import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
+import com.sumanonline.sumanmovies.data.remote.kmdl.KMDLMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesleech.MoviesLeechMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesmod.MoviesModMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
 import com.sumanonline.sumanmovies.data.remote.reanime.ReAnimeMobileClient
 import com.sumanonline.sumanmovies.util.MediaMatcher
@@ -25,7 +28,10 @@ class PlaybackResolver(
     private val fourKHdHubClient: FourKHdHubMobileClient = FourKHdHubMobileClient(),
     private val hdHub4uClient: HDHub4uMobileClient = HDHub4uMobileClient(),
     private val play4UClient: Play4UMobileClient = Play4UMobileClient(),
-    private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient()
+    private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient(),
+    private val kmdlClient: KMDLMobileClient = KMDLMobileClient(),
+    private val moviesLeechClient: MoviesLeechMobileClient = MoviesLeechMobileClient(),
+    private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient()
 ) {
     private val serverCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ServerState>>()
     private val cacheTtlMs = 15 * 60 * 1000L
@@ -54,10 +60,11 @@ class PlaybackResolver(
         episode: Int = 1,
         providerId: String? = null,
         releaseYear: String? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        absoluteEpisode: Int? = null
     ): ServerState = withContext(Dispatchers.IO) {
         val cleanTitle = MediaMatcher.normalizeForMatching(title)
-        val key = "${server.name}:$cleanTitle:$season:$episode:${providerId ?: ""}:${releaseYear ?: ""}"
+        val key = "${server.name}:$cleanTitle:$season:$episode:${providerId ?: ""}:${releaseYear ?: ""}:${absoluteEpisode ?: ""}"
         if (!forceRefresh) {
             val cached = serverCache[key]
             if (cached != null && System.currentTimeMillis() - cached.first < cacheTtlMs && cached.second.status == ServerAvailability.AVAILABLE) {
@@ -66,7 +73,7 @@ class PlaybackResolver(
         }
 
         try {
-            val serverTimeoutMs = if (server == StreamingServer.MOVIEBOX) 30000L else 12000L
+            val serverTimeoutMs = if (server == StreamingServer.MOVIEBOX || server == StreamingServer.MOVIESLEECH || server == StreamingServer.KMDL) 30000L else 15000L
             val state = kotlinx.coroutines.withTimeoutOrNull(serverTimeoutMs) {
                 val (rawStreams, subtitles) = when (server) {
                     StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId, releaseYear)
@@ -74,7 +81,10 @@ class PlaybackResolver(
                     StreamingServer.HDHUB4U -> resolveHDHub4u(title, season, episode, providerId, releaseYear)
                     StreamingServer.PLAY4U -> resolvePlay4U(title, season, episode, providerId, releaseYear)
                     StreamingServer.DRAMACHI -> resolveDramachi(title, season, episode, providerId, releaseYear)
-                    StreamingServer.REANIME -> resolveReAnime(title, season, episode, providerId, releaseYear)
+                    StreamingServer.REANIME -> resolveReAnime(title, season, episode, providerId, releaseYear, absoluteEpisode)
+                    StreamingServer.KMDL -> resolveKMDL(title, season, episode, providerId, releaseYear)
+                    StreamingServer.MOVIESLEECH -> resolveMoviesLeech(title, season, episode, providerId, releaseYear)
+                    StreamingServer.MOVIESMOD -> resolveMoviesMod(title, season, episode, providerId, releaseYear)
                 }
 
                 val validStreams = rawStreams.filter { validateStreamSource(it) }
@@ -484,29 +494,37 @@ class PlaybackResolver(
         season: Int,
         episode: Int,
         providerId: String?,
-        releaseYear: String? = null
+        releaseYear: String? = null,
+        absoluteEpisode: Int? = null
     ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        val isMovie = (season == 0)
         if (providerId?.startsWith("reanime:") == true) {
             val cleanId = providerId.removePrefix("reanime:").trim()
-            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, title, releaseYear)
+            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, title, releaseYear, absoluteEpisode, isMovie)
             if (directStreams.first.isNotEmpty()) {
                 return directStreams
             }
         }
 
-        val cleanAnimeTitle = title
+        val decomposed = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        val cleanAnimeTitle = stripped
             .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
             .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\s*\(\d{4}\)"""), "")
-            .replace("é", "e")
-            .replace("É", "E")
             .trim()
 
-        val resolvedAniListId = reAnimeClient.resolveAniListId(cleanAnimeTitle, releaseYear)?.toString()
+        val resolvedAniListId = if (absoluteEpisode != null && absoluteEpisode > 0) {
+            reAnimeClient.resolveAniListId(cleanAnimeTitle, releaseYear, 1, isMovie)?.toString()
+        } else {
+            reAnimeClient.resolveAniListId(cleanAnimeTitle, releaseYear, season, isMovie)?.toString()
+                ?: reAnimeClient.resolveAniListId(cleanAnimeTitle, releaseYear, 1, isMovie)?.toString()
+        }
+
         if (!resolvedAniListId.isNullOrBlank()) {
-            val aniStreams = reAnimeClient.resolveStreams(resolvedAniListId, season, episode, cleanAnimeTitle, releaseYear)
+            val aniStreams = reAnimeClient.resolveStreams(resolvedAniListId, season, episode, cleanAnimeTitle, releaseYear, absoluteEpisode, isMovie)
             if (aniStreams.first.isNotEmpty()) {
                 return aniStreams
             }
@@ -522,19 +540,150 @@ class PlaybackResolver(
             }
         }
 
+        val filteredResults = if (isMovie) {
+            localResults.filter { it.mediaType == com.sumanonline.sumanmovies.data.models.MediaType.MOVIE }
+        } else {
+            localResults.filter { it.mediaType != com.sumanonline.sumanmovies.data.models.MediaType.MOVIE }
+        }.ifEmpty { localResults }
+
         val match = MediaMatcher.findBestMatch(
-            localResults,
+            filteredResults,
             targetTitle = cleanAnimeTitle.ifBlank { title },
             targetYear = releaseYear,
             season = season,
-            isSeries = season > 0
+            isSeries = !isMovie
         )
 
         if (match != null) {
             val cleanId = match.id.removePrefix("reanime:").trim()
-            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, cleanAnimeTitle, releaseYear)
+            val directStreams = reAnimeClient.resolveStreams(cleanId, season, episode, cleanAnimeTitle, releaseYear, absoluteEpisode, isMovie)
             if (directStreams.first.isNotEmpty()) {
                 return directStreams
+            }
+        }
+
+        return Pair(emptyList(), emptyList())
+    }
+
+    private suspend fun resolveKMDL(
+        title: String,
+        season: Int,
+        episode: Int,
+        providerId: String?,
+        releaseYear: String? = null
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        if (providerId?.startsWith("kmdl:") == true) {
+            val res = kmdlClient.resolveStreamAndSubtitles(providerId, season, episode)
+            if (res.first.isNotEmpty()) {
+                return res
+            }
+        }
+
+        var results = kmdlClient.search(title)
+        if (results.isEmpty()) {
+            val queries = MediaMatcher.buildSearchQueries(title)
+            for (q in queries) {
+                if (q.equals(title, ignoreCase = true)) continue
+                results = kmdlClient.search(q)
+                if (results.isNotEmpty()) break
+            }
+        }
+        val match = MediaMatcher.findBestMatch(
+            results,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = (season > 0)
+        ) ?: results.firstOrNull()
+
+        if (match != null) {
+            val res = kmdlClient.resolveStreamAndSubtitles(match.id, season, episode)
+            if (res.first.isNotEmpty()) {
+                return res
+            }
+        }
+
+        return Pair(emptyList(), emptyList())
+    }
+
+    private suspend fun resolveMoviesLeech(
+        title: String,
+        season: Int,
+        episode: Int,
+        providerId: String?,
+        releaseYear: String? = null
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        if (providerId?.startsWith("moviesleech:") == true) {
+            val streams = moviesLeechClient.resolveStream(providerId, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
+            }
+        }
+
+        var results = moviesLeechClient.search(title)
+        if (results.isEmpty()) {
+            val queries = MediaMatcher.buildSearchQueries(title)
+            for (q in queries) {
+                if (q.equals(title, ignoreCase = true)) continue
+                results = moviesLeechClient.search(q)
+                if (results.isNotEmpty()) break
+            }
+        }
+
+        val match = MediaMatcher.findBestMatch(
+            results,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = (season > 0)
+        ) ?: results.firstOrNull()
+
+        if (match != null) {
+            val streams = moviesLeechClient.resolveStream(match.id, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
+            }
+        }
+
+        return Pair(emptyList(), emptyList())
+    }
+
+    private suspend fun resolveMoviesMod(
+        title: String,
+        season: Int,
+        episode: Int,
+        providerId: String?,
+        releaseYear: String? = null
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        if (providerId?.startsWith("moviesmod:") == true) {
+            val streams = moviesModClient.resolveStream(providerId, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
+            }
+        }
+
+        var results = moviesModClient.search(title)
+        if (results.isEmpty()) {
+            val queries = MediaMatcher.buildSearchQueries(title)
+            for (q in queries) {
+                if (q.equals(title, ignoreCase = true)) continue
+                results = moviesModClient.search(q)
+                if (results.isNotEmpty()) break
+            }
+        }
+
+        val match = MediaMatcher.findBestMatch(
+            results,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = (season > 0)
+        ) ?: results.firstOrNull()
+
+        if (match != null) {
+            val streams = moviesModClient.resolveStream(match.id, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
             }
         }
 

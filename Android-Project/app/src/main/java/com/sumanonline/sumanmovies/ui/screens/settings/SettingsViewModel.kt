@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 
 data class SettingsUiState(
     val autoPlayNextEpisode: Boolean = true,
+    val autoSkipIntro: Boolean = false,
+    val autoSkipCredits: Boolean = false,
     val preferredSubtitleLanguage: String = "English",
     val preferredAudioLanguage: String = "English",
     val subtitlesByDefault: Boolean = true,
@@ -50,6 +52,8 @@ class SettingsViewModel(
     private val _uiState = MutableStateFlow(
         SettingsUiState(
             autoPlayNextEpisode = preferencesManager.autoPlayNextEpisode.value,
+            autoSkipIntro = preferencesManager.autoSkipIntro.value,
+            autoSkipCredits = preferencesManager.autoSkipCredits.value,
             preferredSubtitleLanguage = preferencesManager.preferredSubtitleLanguage.value,
             preferredAudioLanguage = preferencesManager.preferredAudioLanguage.value,
             subtitlesByDefault = preferencesManager.subtitlesByDefault.value,
@@ -83,6 +87,18 @@ class SettingsViewModel(
         val newVal = !_uiState.value.autoPlayNextEpisode
         preferencesManager.setAutoPlayNextEpisode(newVal)
         _uiState.value = _uiState.value.copy(autoPlayNextEpisode = newVal)
+    }
+
+    fun toggleAutoSkipIntro() {
+        val newVal = !_uiState.value.autoSkipIntro
+        preferencesManager.setAutoSkipIntro(newVal)
+        _uiState.value = _uiState.value.copy(autoSkipIntro = newVal)
+    }
+
+    fun toggleAutoSkipCredits() {
+        val newVal = !_uiState.value.autoSkipCredits
+        preferencesManager.setAutoSkipCredits(newVal)
+        _uiState.value = _uiState.value.copy(autoSkipCredits = newVal)
     }
 
     fun toggleSubtitlesByDefault() {

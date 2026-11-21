@@ -104,6 +104,7 @@ import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.data.models.TrailerItem
 import com.sumanonline.sumanmovies.ui.components.VerticalPosterCard
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
@@ -328,7 +329,7 @@ fun DetailsScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (state.isOverviewExpanded) "Read less" else "Read more",
-                                color = Color.White,
+                                color = accent,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier
@@ -536,7 +537,8 @@ fun DetailsScreen(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(20.dp))
-                                        .background(if (isSelected) accent else Color.White.copy(alpha = 0.08f))
+                                        .background(if (isSelected) accent else CardElevated)
+                                        .border(BorderStroke(1.dp, if (isSelected) accent else BorderDark), RoundedCornerShape(20.dp))
                                         .clickable { viewModel.selectSeason(s.seasonNumber) }
                                         .padding(horizontal = 18.dp, vertical = 9.dp)
                                 ) {
@@ -672,6 +674,7 @@ fun DetailsScreen(
                             .padding(horizontal = 16.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(CardDark)
+                            .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
                             .padding(16.dp)
                     ) {
                         Row(
@@ -740,7 +743,7 @@ fun DetailsScreen(
                                                 .height(6.dp)
                                                 .clip(RoundedCornerShape(3.dp)),
                                             color = Color(0xFFF59E0B),
-                                            trackColor = Color.White.copy(alpha = 0.08f)
+                                            trackColor = CardElevated
                                         )
                                     }
                                 }
@@ -1042,7 +1045,7 @@ fun DetailsScreen(
                 QualitySelectionBottomSheet(
                     server = modalServer,
                     details = details,
-                    streams = liveStreams,
+                    streams = liveStreams.filter { it.canStream() },
                     mode = state.qualityModalMode,
                     isLoading = state.isQualityModalLoading,
                     resolvingStreamUrl = state.resolvingStreamUrl,
@@ -1083,13 +1086,14 @@ private fun ActionIconButton(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f)),
+                .background(CardElevated)
+                .border(1.dp, BorderDark, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = Color.White,
+                tint = TextPrimary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -1117,6 +1121,7 @@ private fun EpisodePreviewCard(
             .height(86.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(CardDark)
+            .border(1.dp, BorderDark, RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -1200,8 +1205,8 @@ private fun ServerCard(
     val accent = LocalAppAccent.current.color
     val status = serverState?.status ?: ServerAvailability.CHECKING
 
-    val borderColor = if (isSelected) accent else Color.White.copy(alpha = 0.12f)
-    val bgColor = if (isSelected) accent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.04f)
+    val borderColor = if (isSelected) accent else BorderDark
+    val bgColor = if (isSelected) accent.copy(alpha = 0.16f) else CardElevated
 
     Box(
         modifier = modifier
@@ -1230,7 +1235,7 @@ private fun ServerCard(
             ) {
                 Text(
                     text = server.displayName,
-                    color = if (isSelected) Color.White else TextSecondary,
+                    color = if (isSelected) TextPrimary else TextSecondary,
                     fontSize = 13.5.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1,
@@ -1363,7 +1368,7 @@ private fun QualitySelectionBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14151E),
+        containerColor = CardElevated,
         contentColor = TextPrimary,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = {
@@ -1373,7 +1378,7 @@ private fun QualitySelectionBottomSheet(
                     .width(42.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.25f))
+                    .background(BorderDark)
             )
         }
     ) {
@@ -1710,15 +1715,15 @@ private fun DownloadOptionCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF161722))
-            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(12.dp))
+            .background(CardDark)
+            .border(1.dp, BorderDark, RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         Column {
 
             Text(
                 text = displayTitle,
-                color = Color.White,
+                color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.5.sp,
                 lineHeight = 18.sp
@@ -2090,7 +2095,7 @@ private fun DownloadFullScreenModal(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color(0xFF0D0E15)
+            color = Color(0xFF08080A)
         ) {
             Column(
                 modifier = Modifier
@@ -2215,12 +2220,15 @@ private fun DownloadFullScreenModal(
                             StreamingServer.FOURKHDHUB -> "4KHub4U"
                             StreamingServer.DRAMACHI -> "Dramachi"
                             StreamingServer.REANIME -> "ReAnime"
+                            StreamingServer.KMDL -> "KMDL"
+                            StreamingServer.MOVIESLEECH -> "MoviesLeech"
+                            StreamingServer.MOVIESMOD -> "MoviesMod"
                         }
 
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(if (isSelected) Color(0xFFE50914) else Color(0xFF1E2130))
+                                .background(if (isSelected) Color(0xFFE50914) else Color(0xFF16161D))
                                 .clickable { onSelectServer(srv) }
                                 .padding(horizontal = 20.dp, vertical = 9.dp)
                         ) {
@@ -2380,8 +2388,8 @@ private fun DownloadFullScreenModal(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF131520))
-                                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                                    .background(Color(0xFF121217))
+                                    .border(1.dp, Color(0xFF1F1F27), RoundedCornerShape(16.dp))
                             ) {
                                 Column {
                                     
@@ -2517,8 +2525,8 @@ private fun DownloadOptionCardV2(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF181B28))
-            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(12.dp))
+            .background(Color(0xFF16161E))
+            .border(1.dp, Color(0xFF1F1F27), RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
         Column {

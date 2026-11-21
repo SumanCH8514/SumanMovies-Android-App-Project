@@ -23,6 +23,8 @@ class TmdbRepository(
     private val apiBaseUrl = if (normalizedBaseUrl.endsWith("/3/")) normalizedBaseUrl else "${normalizedBaseUrl}3/"
     private val imageBaseUrl = "${normalizedBaseUrl}t/p/w500"
     private val backdropBaseUrl = "${normalizedBaseUrl}t/p/original"
+    private val fastPosterBaseUrl = "${normalizedBaseUrl}t/p/w342"
+    private val fastBackdropBaseUrl = "${normalizedBaseUrl}t/p/w780"
 
     private val authInterceptor = Interceptor { chain ->
         val original = chain.request()
@@ -557,6 +559,48 @@ class TmdbRepository(
             synchronized(searchCache) { searchCache.put(cacheKey, Pair(System.currentTimeMillis(), list)) }
         }
         return list
+    }
+
+    suspend fun fetchFastArtwork(
+        title: String,
+        year: String? = null,
+        mediaType: MediaType? = null
+    ): Pair<String?, String?> {
+        val clean = title
+            .replace(Regex("""\b(1080p|720p|480p|2160p|4k|hdr|web-dl|bluray|hevc|x265|x264|dual audio|hindi|english)\b""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\.[a-zA-Z0-9]{3,4}$"""), "")
+            .replace(Regex("""[🌐⭕💬]"""), "")
+            .trim()
+        if (clean.isBlank()) return Pair(null, null)
+
+        val queries = mutableListOf(clean)
+        val noPunct = clean.replace(Regex("""[:\-/]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        if (noPunct != clean && noPunct.isNotBlank()) queries.add(noPunct)
+        val base = clean.substringBefore(":").substringBefore("-").trim()
+        if (base != clean && base != noPunct && base.length >= 3) queries.add(base)
+
+        for (q in queries) {
+            try {
+                val response = api.searchMulti(q, 1, "en-US")
+                val results = response.results.filter { !it.posterPath.isNullOrBlank() }
+                if (results.isNotEmpty()) {
+                    val targetYear = year?.take(4)
+                    val matched = if (!targetYear.isNullOrBlank()) {
+                        results.firstOrNull {
+                            val y = (it.releaseDate ?: it.firstAirDate)?.take(4)
+                            y == targetYear
+                        } ?: results.first()
+                    } else {
+                        results.first()
+                    }
+
+                    val poster = matched.posterPath?.let { "$fastPosterBaseUrl$it" }
+                    val backdrop = matched.backdropPath?.let { "$fastBackdropBaseUrl$it" }
+                    return Pair(poster, backdrop)
+                }
+            } catch (_: Exception) {}
+        }
+        return Pair(null, null)
     }
 
     private fun extractLogoUrl(images: TmdbImagesDto?): String? {

@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaItem
+import com.sumanonline.sumanmovies.data.models.MediaSegment
+import com.sumanonline.sumanmovies.data.models.MediaSegmentType
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.Season
 import com.sumanonline.sumanmovies.data.models.StreamSource
@@ -59,6 +61,7 @@ fun getAvailableQualitiesForServer(streams: List<StreamSource>): List<String> {
 data class PlayerUiState(
     val mediaTitle: String = "",
     val mediaId: String = "",
+    val tmdbId: Int? = null,
     val mediaType: MediaType = MediaType.MOVIE,
     val releaseYear: String? = null,
     val posterUrl: String? = null,
@@ -98,7 +101,11 @@ data class PlayerUiState(
     val hasNextEpisode: Boolean = false,
     val hasPreviousEpisode: Boolean = false,
     val dialogueBoostEnabled: Boolean = false,
-    val loadingStageText: String? = null
+    val loadingStageText: String? = null,
+    val skipSegments: List<MediaSegment> = emptyList(),
+    val currentSkipSegment: MediaSegment? = null,
+    val autoSkipIntro: Boolean = false,
+    val autoSkipCredits: Boolean = false
 )
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -112,7 +119,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _serverSubtitles = MutableStateFlow<List<SubtitleTrack>>(emptyList())
     private val _serverStreamsCache = ConcurrentHashMap<StreamingServer, List<StreamSource>>()
     private val _serverSubtitlesCache = ConcurrentHashMap<StreamingServer, List<SubtitleTrack>>()
+    private val _seasonEpisodesCache = ConcurrentHashMap<Int, List<Episode>>()
     private var prefetchJob: Job? = null
+    private var skipSegmentsJob: Job? = null
+    private val autoSkippedSegmentTypes = mutableSetOf<MediaSegmentType>()
+
+    private fun calculateAbsoluteEpisode(seasonNum: Int, epNum: Int): Int? {
+        if (seasonNum <= 1) return epNum.takeIf { it > 0 }
+        val seasons = _uiState.value.seasonsList
+        if (seasons.isEmpty()) return epNum.takeIf { it > 0 }
+
+        val currentEpisodes = _uiState.value.currentSeasonEpisodes
+        val firstEpInSeason = currentEpisodes.firstOrNull { it.seasonNumber == seasonNum }?.episodeNumber
+            ?: currentEpisodes.firstOrNull()?.episodeNumber
+
+        val currentSeason = seasons.firstOrNull { it.seasonNumber == seasonNum }
+        val currentSeasonCount = currentSeason?.episodeCount ?: 0
+
+        val prevCount = seasons
+            .filter { it.seasonNumber in 1 until seasonNum }
+            .sumOf { it.episodeCount }
+
+        val isAlreadyAbsolute = (firstEpInSeason != null && firstEpInSeason > 1) ||
+                (prevCount > 0 && epNum > prevCount) ||
+                (currentSeasonCount in 1..50 && epNum > currentSeasonCount) ||
+                (seasonNum > 1 && epNum > 50)
+
+        return if (isAlreadyAbsolute) {
+            epNum
+        } else if (prevCount > 0) {
+            prevCount + epNum
+        } else {
+            epNum
+        }
+    }
 
     private fun prefetchOtherServers(
         title: String,
@@ -129,11 +169,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
                 com.sumanonline.sumanmovies.data.models.isAnimeCandidate(title, _uiState.value.mediaType, null, mediaId)
             val targets = StreamingServer.getAvailableServers(isAnime, _uiState.value.serverStreamsMap.containsKey(StreamingServer.REANIME)).filter { it != currentServer }
+            val absEp = calculateAbsoluteEpisode(seasonNum, epNum)
             targets.forEach { srv ->
                 launch(Dispatchers.IO) {
                     if (_serverStreamsCache.containsKey(srv)) return@launch
                     try {
-                        val resolved = repository.resolveServer(srv, title, seasonNum, epNum, mediaId, releaseYear)
+                        val resolved = repository.resolveServer(srv, title, seasonNum, epNum, mediaId, releaseYear, false, absEp)
                         if (resolved.streams.isNotEmpty()) {
                             _serverStreamsCache[srv] = resolved.streams
                             if (resolved.subtitles.isNotEmpty()) {
@@ -174,6 +215,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         observePlaybackErrors()
         observeAudioTracks()
         observeSubtitleTracks()
+        observeSkipPreferences()
+    }
+
+    private fun observeSkipPreferences() {
+        viewModelScope.launch {
+            app.preferencesManager.autoSkipIntro.collectLatest { autoIntro ->
+                _uiState.value = _uiState.value.copy(autoSkipIntro = autoIntro)
+            }
+        }
+        viewModelScope.launch {
+            app.preferencesManager.autoSkipCredits.collectLatest { autoCredits ->
+                _uiState.value = _uiState.value.copy(autoSkipCredits = autoCredits)
+            }
+        }
     }
 
     val seekStepSeconds: Int
@@ -289,7 +344,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             var lastHandledStreamKey: String? = null
 
             playerManager.playbackState.collectLatest { state ->
-                if (state.isPlaying && !state.isBuffering && _uiState.value.loadingStageText != null) {
+                if ((state.isPlaying || state.durationMs > 0) && !state.isBuffering && _uiState.value.loadingStageText != null) {
                     _uiState.value = _uiState.value.copy(loadingStageText = null)
                 }
                 val error = state.errorMessage
@@ -418,31 +473,73 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startPositionLoop() {
         viewModelScope.launch {
+            var bufferingStallTicks = 0
             while (isActive) {
-                playerManager.updatePosition()
-                val current = playerManager.playbackState.value
-                if (current.durationMs > 0 && current.currentPositionMs > 0) {
-                    val s = _uiState.value
-                    if (s.mediaId.isNotBlank()) {
-                        val curEp = s.currentSeasonEpisodes.firstOrNull {
-                            it.seasonNumber == s.seasonNumber && it.episodeNumber == s.episodeNumber
+                val s = _uiState.value
+                if (!s.isLoadingStreams && s.resolvingStreamUrl == null && s.pendingFallbackStream == null) {
+                    playerManager.updatePosition()
+                    val current = playerManager.playbackState.value
+                    if (current.isBuffering && current.currentPositionMs <= 500L && s.currentStream != null && s.playbackErrorMessage == null) {
+                        bufferingStallTicks++
+                        if (bufferingStallTicks >= 16) {
+                            bufferingStallTicks = 0
+                            triggerAutoFallback(s.currentStream, "Stream buffering timed out (stalled)")
                         }
-                        val still = curEp?.stillUrl ?: s.episodeStillUrl
-                        repository.saveWatchProgress(
-                            mediaId = s.mediaId,
-                            title = s.mediaTitle,
-                            mediaType = s.mediaType,
-                            posterUrl = s.posterUrl,
-                            season = s.seasonNumber,
-                            episode = s.episodeNumber,
-                            positionMs = current.currentPositionMs,
-                            durationMs = current.durationMs,
-                            backdropUrl = s.backdropUrl,
-                            stillUrl = still
-                        )
+                    } else if (!current.isBuffering || current.currentPositionMs > 500L) {
+                        bufferingStallTicks = 0
+                    }
+                    if (current.durationMs > 0 && current.currentPositionMs > 0) {
+                        if (s.mediaId.isNotBlank()) {
+                            val curEp = s.currentSeasonEpisodes.firstOrNull {
+                                it.seasonNumber == s.seasonNumber && it.episodeNumber == s.episodeNumber
+                            }
+                            val still = curEp?.stillUrl ?: s.episodeStillUrl
+                            repository.saveWatchProgress(
+                                mediaId = s.mediaId,
+                                title = s.mediaTitle,
+                                mediaType = s.mediaType,
+                                posterUrl = s.posterUrl,
+                                season = s.seasonNumber,
+                                episode = s.episodeNumber,
+                                positionMs = current.currentPositionMs,
+                                durationMs = current.durationMs,
+                                backdropUrl = s.backdropUrl,
+                                stillUrl = still
+                            )
+                        }
+
+                        val pos = current.currentPositionMs
+                        val segments = s.skipSegments
+                        val activeSegment = if (pos > 0L && segments.isNotEmpty()) {
+                            segments.firstOrNull { it.contains(pos) }
+                        } else null
+
+                        if (activeSegment != s.currentSkipSegment) {
+                            _uiState.value = _uiState.value.copy(currentSkipSegment = activeSegment)
+                        }
+
+                        if (activeSegment != null) {
+                            val autoIntro = s.autoSkipIntro
+                            val autoCredits = s.autoSkipCredits
+                            val shouldAutoSkip = when (activeSegment.type) {
+                                MediaSegmentType.INTRO, MediaSegmentType.RECAP -> autoIntro && !autoSkippedSegmentTypes.contains(activeSegment.type)
+                                MediaSegmentType.CREDITS -> autoCredits && !autoSkippedSegmentTypes.contains(activeSegment.type)
+                                MediaSegmentType.PREVIEW -> false
+                            }
+                            if (shouldAutoSkip) {
+                                autoSkippedSegmentTypes.add(activeSegment.type)
+                                skipCurrentSegment()
+                            }
+                        } else {
+                            segments.forEach { seg ->
+                                if (pos < seg.startMs - 2000L) {
+                                    autoSkippedSegmentTypes.remove(seg.type)
+                                }
+                            }
+                        }
                     }
                 }
-                delay(1000)
+                delay(500)
             }
         }
     }
@@ -473,6 +570,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         hasAttemptedInitialAudio = false
         hasUserSelectedSubtitle = false
         hasAttemptedInitialSubtitle = false
+        playerManager.resetPlayback()
         _serverSubtitles.value = initialSubtitles
         val serverEnum = try {
             if (serverName != null) StreamingServer.valueOf(serverName)
@@ -484,15 +582,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         val isSeries = mediaType == MediaType.SERIES || mediaType == MediaType.ANIME || mediaType == MediaType.DRAMA
         val cleanBase = title
-            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+            .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(\d{4}\)"""), "")
             .trim()
             .ifBlank { title }
         val resolvedMediaTitle = if (isSeries) "$cleanBase - S${seasonNumber}E${episodeNumber}" else title
+        val hasPrevInit = isSeries && (episodeNumber > 1 || seasonNumber > 1)
+        val hasNextInit = isSeries
 
+        autoSkippedSegmentTypes.clear()
+        _seasonEpisodesCache.clear()
+        val initialTmdbId = mediaId.toIntOrNull() ?: repository.getCachedItem(mediaId)?.tmdbId
         _uiState.value = _uiState.value.copy(
             mediaId = mediaId,
+            tmdbId = initialTmdbId,
             mediaTitle = resolvedMediaTitle,
             mediaType = mediaType,
             releaseYear = releaseYear,
@@ -503,20 +609,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             serverDisplayName = resolvedServerDisplay,
             selectedServer = serverEnum,
             seasonNumber = seasonNumber,
-            episodeNumber = episodeNumber
+            episodeNumber = episodeNumber,
+            hasNextEpisode = hasNextInit,
+            hasPreviousEpisode = hasPrevInit,
+            skipSegments = emptyList(),
+            currentSkipSegment = null
         )
+        loadSkipSegments(mediaId, title, mediaType, releaseYear, seasonNumber, episodeNumber)
 
-        if (mediaType == MediaType.SERIES) {
-            loadSeriesMetadata(mediaId, title, seasonNumber, episodeNumber, initialEpisodeTitle)
+        if (isSeries) {
+            loadSeriesMetadata(mediaId, title, mediaType, seasonNumber, episodeNumber, initialEpisodeTitle)
         } else if (mediaType != MediaType.TV_CHANNEL) {
             viewModelScope.launch {
                 try {
                     val details = repository.getDetails(mediaId, mediaType)
                     val yr = details?.year ?: details?.releaseDate?.take(4)
                     val bd = details?.backdropUrl
+                    val resolvedTmdb = details?.tmdbId
                     _uiState.value = _uiState.value.copy(
                         releaseYear = if (releaseYear.isNullOrBlank() && !yr.isNullOrBlank()) yr else _uiState.value.releaseYear,
-                        backdropUrl = if (_uiState.value.backdropUrl.isNullOrBlank() && !bd.isNullOrBlank()) bd else _uiState.value.backdropUrl
+                        backdropUrl = if (_uiState.value.backdropUrl.isNullOrBlank() && !bd.isNullOrBlank()) bd else _uiState.value.backdropUrl,
+                        tmdbId = resolvedTmdb ?: _uiState.value.tmdbId
                     )
                 } catch (_: Exception) {}
             }
@@ -548,20 +661,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             val supports4k = com.sumanonline.sumanmovies.util.DeviceCapabilities.supports4KHevc()
-            val candidateInitial = if (!supports4k && initialStream != null && (initialStream.quality.contains("2160") || initialStream.quality.contains("4k", ignoreCase = true))) {
-                mergedInitial.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
-                    ?: mergedInitial.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
+            val streamableInitial = mergedInitial.filter { it.canStream() }
+            val fullMerged = streamableInitial.filter { it.sourceQualityTag != "Preview" }.ifEmpty { streamableInitial }
+            val candidateInitial = if (!supports4k && initialStream != null && initialStream.canStream() && (initialStream.quality.contains("2160") || initialStream.quality.contains("4k", ignoreCase = true))) {
+                fullMerged.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
+                    ?: fullMerged.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
                     ?: initialStream
-            } else {
+            } else if (initialStream != null && initialStream.canStream() && initialStream.sourceQualityTag != "Preview") {
                 initialStream
+            } else {
+                fullMerged.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
+                    ?: fullMerged.firstOrNull()
             }
 
             val defaultStream = candidateInitial ?: if (!supports4k) {
-                mergedInitial.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
-                    ?: mergedInitial.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
-                    ?: mergedInitial.firstOrNull()
+                fullMerged.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
+                    ?: fullMerged.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
+                    ?: fullMerged.firstOrNull()
             } else {
-                mergedInitial.firstOrNull()
+                fullMerged.firstOrNull()
             }
 
             val initialMap = if (mergedInitial.isNotEmpty()) {
@@ -635,6 +753,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             val actualSeason = if (isSeries) seasonNumber.coerceAtLeast(1) else 0
             val actualEpisode = if (isSeries) episodeNumber.coerceAtLeast(1) else 0
+            val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
 
             _uiState.value = _uiState.value.copy(isLoadingStreams = true)
             val resolvedState = repository.resolveServer(
@@ -643,7 +762,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 actualSeason,
                 actualEpisode,
                 mediaId,
-                _uiState.value.releaseYear ?: releaseYear
+                _uiState.value.releaseYear ?: releaseYear,
+                false,
+                absEp
             )
             val currentList = _uiState.value.availableStreams.toMutableList()
             for (newS in resolvedState.streams) {
@@ -686,8 +807,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 drawerSelectedQuality = autoQ,
                 isLoadingStreams = false
             )
-            if (_uiState.value.currentStream == null && currentList.isNotEmpty()) {
-                val first = currentList.first()
+            val streamableCurrent = currentList.filter { it.canStream() }
+            if (_uiState.value.currentStream == null && streamableCurrent.isNotEmpty()) {
+                val first = streamableCurrent.first()
                 switchStream(first, resumePositionMs)
             }
             prefetchOtherServers(
@@ -704,19 +826,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun loadSeriesMetadata(
         mediaId: String,
         title: String,
+        mediaType: MediaType,
         seasonNum: Int,
         epNum: Int,
         initialEpTitle: String?
     ) {
         viewModelScope.launch {
             try {
-                val details = repository.getDetails(mediaId, MediaType.SERIES)
+                val details = repository.getDetails(mediaId, mediaType)
                 val yr = details?.year ?: details?.releaseDate?.take(4)
+                val resolvedTmdbId = details?.tmdbId
                 if (!yr.isNullOrBlank()) {
                     _uiState.value = _uiState.value.copy(releaseYear = yr)
                 }
                 if (!details?.backdropUrl.isNullOrBlank()) {
                     _uiState.value = _uiState.value.copy(backdropUrl = details?.backdropUrl)
+                }
+                if (resolvedTmdbId != null) {
+                    _uiState.value = _uiState.value.copy(tmdbId = resolvedTmdbId)
                 }
                 val loadedSeasons = details?.seasons?.filter { it.seasonNumber > 0 }?.ifEmpty { null }
                     ?: listOf(
@@ -727,9 +854,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value = _uiState.value.copy(
                     seasonsList = loadedSeasons,
                     selectedDrawerSeason = seasonNum,
-                    episodeTitle = initialEpTitle
+                    episodeTitle = initialEpTitle,
+                    tmdbId = resolvedTmdbId ?: _uiState.value.tmdbId
                 )
-                loadDrawerSeasonEpisodes(seasonNum, epNum, details?.tmdbId)
+                loadDrawerSeasonEpisodes(seasonNum, epNum, resolvedTmdbId)
             } catch (_: Exception) {
                 val defaultSeasons = listOf(
                     Season(1, "Season 1", 8),
@@ -741,7 +869,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     selectedDrawerSeason = seasonNum,
                     episodeTitle = initialEpTitle
                 )
-                loadDrawerSeasonEpisodes(seasonNum, epNum)
+                loadDrawerSeasonEpisodes(seasonNum, epNum, _uiState.value.tmdbId)
             }
         }
     }
@@ -749,41 +877,50 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun loadDrawerSeasonEpisodes(seasonNum: Int, currentEpNum: Int? = null, tmdbIdOverride: Int? = null) {
         viewModelScope.launch {
             try {
-                val cachedItem = repository.getCachedItem(_uiState.value.mediaId)
-                val tmdbId = tmdbIdOverride ?: _uiState.value.mediaId.toIntOrNull() ?: cachedItem?.tmdbId
-                val episodes = if (tmdbId != null) {
-                    repository.getSeasonEpisodes(tmdbId, seasonNum)
-                } else {
-                    repository.getSeasonEpisodesForMedia(_uiState.value.mediaId, seasonNum)
+                val effectiveTmdbId = tmdbIdOverride
+                    ?: _uiState.value.tmdbId
+                    ?: _uiState.value.mediaId.toIntOrNull()
+                    ?: repository.getCachedItem(_uiState.value.mediaId)?.tmdbId
+
+                if (effectiveTmdbId != null && effectiveTmdbId != _uiState.value.tmdbId) {
+                    _uiState.value = _uiState.value.copy(tmdbId = effectiveTmdbId)
                 }
+
+                val cached = _seasonEpisodesCache[seasonNum]
+                val episodes = if (!cached.isNullOrEmpty()) {
+                    cached
+                } else {
+                    val fetched = if (effectiveTmdbId != null) {
+                        repository.getSeasonEpisodes(effectiveTmdbId, seasonNum)
+                    } else {
+                        repository.getSeasonEpisodesForMedia(_uiState.value.mediaId, seasonNum)
+                    }
+                    if (fetched.isNotEmpty()) {
+                        _seasonEpisodesCache[seasonNum] = fetched
+                        fetched
+                    } else {
+                        emptyList()
+                    }
+                }
+
+                val seasonObj = _uiState.value.seasonsList.firstOrNull { it.seasonNumber == seasonNum }
+                val expectedEpCount = seasonObj?.episodeCount?.takeIf { it > 0 } ?: 10
+
                 val finalEpisodes = episodes.ifEmpty {
-                    val sampleTitles = listOf(
-                        "A Shadow of the Past", "Adrift", "Adar", "The Great Wave",
-                        "Partings", "Udûn", "The Eye", "Alloyed"
-                    )
-                    val sampleSynopses = listOf(
-                        "Galadriel is disturbed by signs of an ancient evil return; Arondir makes a discovery.",
-                        "Galadriel finds a new ally; Elrond faces a cold reception from an old friend.",
-                        "Arondir finds himself a captive; Galadriel and Halbrand explore a legendary kingdom.",
-                        "Queen Regent Miriel faith is tested; Isildur finds himself at a crossroads.",
-                        "Nori questions her instincts; Elrond struggles to stay true to his oath.",
-                        "Adar and his army march on Ostirith.",
-                        "Survivors of a cataclysm try to find safety; The Harfoots confront evil.",
-                        "New alliances are forged and ancient destinies begin to unfold."
-                    )
-                    (1..8).map { ep ->
+                    (1..expectedEpCount).map { ep ->
                         Episode(
                             id = "${_uiState.value.mediaId}-$seasonNum-$ep",
                             episodeNumber = ep,
                             seasonNumber = seasonNum,
-                            title = sampleTitles.getOrElse(ep - 1) { "Episode $ep" },
-                            overview = sampleSynopses.getOrElse(ep - 1) { "Episode $ep synopsis." },
+                            title = "Episode $ep",
+                            overview = null,
                             stillUrl = null,
-                            durationMinutes = 64 + (ep * 2),
-                            airDate = "2022"
+                            durationMinutes = null,
+                            airDate = null
                         )
                     }
                 }
+
                 val targetEp = currentEpNum ?: _uiState.value.episodeNumber
                 val epObj = finalEpisodes.firstOrNull { it.episodeNumber == targetEp }
                 val epTitle = epObj?.title
@@ -809,37 +946,91 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         hasAttemptedInitialAudio = false
         hasUserSelectedSubtitle = false
         hasAttemptedInitialSubtitle = false
+
+        val oldState = _uiState.value
+        val oldPos = playerManager.playbackState.value.currentPositionMs
+        val oldDur = playerManager.playbackState.value.durationMs
+        if (oldState.mediaId.isNotBlank() && oldDur > 0L && oldPos > 0L) {
+            val oldEp = oldState.currentSeasonEpisodes.firstOrNull {
+                it.seasonNumber == oldState.seasonNumber && it.episodeNumber == oldState.episodeNumber
+            }
+            val still = oldEp?.stillUrl ?: oldState.episodeStillUrl
+            viewModelScope.launch {
+                repository.saveWatchProgress(
+                    mediaId = oldState.mediaId,
+                    title = oldState.mediaTitle,
+                    mediaType = oldState.mediaType,
+                    posterUrl = oldState.posterUrl,
+                    season = oldState.seasonNumber,
+                    episode = oldState.episodeNumber,
+                    positionMs = oldPos,
+                    durationMs = oldDur,
+                    backdropUrl = oldState.backdropUrl,
+                    stillUrl = still
+                )
+            }
+        }
+        playerManager.resetPlayback()
+
         val cleanBase = _uiState.value.mediaTitle
-            .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-            .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+            .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(\d{4}\)"""), "")
             .trim()
             .ifBlank { _uiState.value.mediaTitle }
         val updatedTitle = "$cleanBase - S${seasonNum}E${epNum}"
 
-        val matchedEp = _uiState.value.currentSeasonEpisodes.firstOrNull { it.episodeNumber == epNum && it.seasonNumber == seasonNum }
+        val isSeries = _uiState.value.mediaType == MediaType.SERIES || _uiState.value.mediaType == MediaType.ANIME || _uiState.value.mediaType == MediaType.DRAMA
+        val curMaxEp = _uiState.value.currentSeasonEpisodes.maxOfOrNull { it.episodeNumber }
+            ?: (_uiState.value.seasonsList.firstOrNull { it.seasonNumber == seasonNum }?.episodeCount?.takeIf { it > 0 })
+            ?: (epNum + 1)
+        val hasNextImmediate = isSeries && (epNum < curMaxEp || _uiState.value.seasonsList.any { it.seasonNumber > seasonNum })
+        val hasPrevImmediate = isSeries && (epNum > 1 || seasonNum > 1)
+
+        val cachedSeasonEps = _seasonEpisodesCache[seasonNum] ?: _uiState.value.currentSeasonEpisodes
+        val matchedEp = cachedSeasonEps.firstOrNull { it.episodeNumber == epNum && it.seasonNumber == seasonNum }
         val epTitle = matchedEp?.title
         val epStill = matchedEp?.stillUrl
+        autoSkippedSegmentTypes.clear()
         _uiState.value = _uiState.value.copy(
             mediaTitle = updatedTitle,
             seasonNumber = seasonNum,
             episodeNumber = epNum,
             episodeTitle = epTitle,
             episodeStillUrl = epStill,
+            hasNextEpisode = hasNextImmediate,
+            hasPreviousEpisode = hasPrevImmediate,
+            currentStream = null,
+            availableStreams = emptyList(),
             isEpisodesDrawerOpen = false,
             isLoadingStreams = true,
-            loadingStageText = "Loading new Episode..."
+            loadingStageText = "Loading new Episode...",
+            skipSegments = emptyList(),
+            currentSkipSegment = null
+        )
+        loadSkipSegments(
+            mediaId = _uiState.value.mediaId,
+            title = cleanBase,
+            type = _uiState.value.mediaType,
+            year = _uiState.value.releaseYear,
+            seasonNumber = seasonNum,
+            episodeNumber = epNum
         )
         viewModelScope.launch {
             _serverStreamsCache.clear()
             _serverSubtitlesCache.clear()
+            val absEp = calculateAbsoluteEpisode(seasonNum, epNum)
             val resolvedState = repository.resolveServer(
                 _uiState.value.selectedServer,
                 cleanBase,
                 seasonNum,
                 epNum,
                 _uiState.value.mediaId,
-                _uiState.value.releaseYear
+                _uiState.value.releaseYear,
+                false,
+                absEp
             )
             _serverStreamsCache[_uiState.value.selectedServer] = resolvedState.streams
             if (resolvedState.subtitles.isNotEmpty()) {
@@ -857,11 +1048,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 drawerSelectedQuality = defaultQ,
                 isLoadingStreams = false
             )
-            val first = resolvedState.streams.firstOrNull()
+            val first = resolvedState.streams.firstOrNull { it.sourceQualityTag != "Preview" }
+                ?: resolvedState.streams.firstOrNull()
             if (first != null) {
                 val targetHistoryId = "${_uiState.value.mediaId}:s${seasonNum}e${epNum}"
                 val savedProgress = repository.getWatchProgress(targetHistoryId)
-                val resumePos = if (savedProgress != null && !savedProgress.isCompleted && savedProgress.positionMs > 0) {
+                val resumePos = if (savedProgress != null && !savedProgress.isCompleted && savedProgress.positionMs > 10000L && (savedProgress.durationMs <= 0L || savedProgress.positionMs < (savedProgress.durationMs * 0.95))) {
                     savedProgress.positionMs
                 } else {
                     0L
@@ -877,7 +1069,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 currentServer = _uiState.value.selectedServer
             )
         }
-        loadDrawerSeasonEpisodes(seasonNum, epNum)
+        loadDrawerSeasonEpisodes(seasonNum, epNum, _uiState.value.tmdbId)
     }
 
     fun playNextEpisode() {
@@ -888,17 +1080,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             playEpisode(curSeason, curEp + 1)
         } else {
             val nextSeason = _uiState.value.seasonsList.firstOrNull { it.seasonNumber > curSeason }?.seasonNumber ?: (curSeason + 1)
-            playEpisode(nextSeason, 1)
+            val isContinuous = curEp > 50 || curEp > (_uiState.value.seasonsList.firstOrNull { it.seasonNumber == curSeason }?.episodeCount ?: 0)
+            val targetEp = if (isContinuous) curEp + 1 else 1
+            playEpisode(nextSeason, targetEp)
         }
     }
 
     fun playPreviousEpisode() {
         val curSeason = _uiState.value.seasonNumber
         val curEp = _uiState.value.episodeNumber
-        if (curEp > 1) {
+        val minEpInSeason = _uiState.value.currentSeasonEpisodes.minOfOrNull { it.episodeNumber } ?: 1
+        if (curEp > minEpInSeason) {
             playEpisode(curSeason, curEp - 1)
         } else if (curSeason > 1) {
-            playEpisode(curSeason - 1, 1)
+            val prevSeason = _uiState.value.seasonsList.lastOrNull { it.seasonNumber < curSeason }?.seasonNumber ?: (curSeason - 1)
+            val prevSeasonEpCount = _seasonEpisodesCache[prevSeason]?.maxOfOrNull { it.episodeNumber }
+                ?: _uiState.value.seasonsList.firstOrNull { it.seasonNumber == prevSeason }?.episodeCount
+                ?: 1
+            playEpisode(prevSeason, prevSeasonEpCount)
         }
     }
 
@@ -921,7 +1120,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             selectedDrawerSeason = seasonNum,
             episodesDrawerTab = "EPISODES"
         )
-        loadDrawerSeasonEpisodes(seasonNum)
+        loadDrawerSeasonEpisodes(seasonNum, null, _uiState.value.tmdbId)
     }
 
     fun toggleDialogueBoost() {
@@ -952,9 +1151,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val isSeries = s.mediaType == MediaType.SERIES || s.mediaType == MediaType.ANIME || s.mediaType == MediaType.DRAMA
                 val cleanTitle = if (isSeries) {
                     s.mediaTitle
-                        .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-                        .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-                        .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+                        .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+                        .replace(Regex("""\s*\(\d{4}\)"""), "")
                         .trim()
                         .ifBlank { s.mediaTitle }
                 } else {
@@ -962,6 +1163,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val actualSeason = if (isSeries) s.seasonNumber.coerceAtLeast(1) else 0
                 val actualEpisode = if (isSeries) s.episodeNumber.coerceAtLeast(1) else 0
+                val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
                 try {
                     val resolvedState = repository.resolveServer(
                         server,
@@ -969,7 +1171,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         actualSeason,
                         actualEpisode,
                         s.mediaId,
-                        s.releaseYear
+                        s.releaseYear,
+                        false,
+                        absEp
                     )
                     _serverStreamsCache[server] = resolvedState.streams
                     if (resolvedState.subtitles.isNotEmpty()) {
@@ -1046,6 +1250,54 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         playerManager.clearError()
         if (next != null) {
             switchStream(next)
+        }
+    }
+
+    fun skipCurrentSegment() {
+        val seg = _uiState.value.currentSkipSegment ?: return
+        val currentPlayback = playerManager.playbackState.value
+        val duration = currentPlayback.durationMs
+        if (seg.type == MediaSegmentType.CREDITS && _uiState.value.hasNextEpisode && seg.endMs == null) {
+            playNextEpisode()
+        } else {
+            val targetMs = seg.targetPosition(duration)
+            playerManager.seekTo(targetMs)
+            _uiState.value = _uiState.value.copy(currentSkipSegment = null)
+        }
+    }
+
+    fun dismissCurrentSkipSegment() {
+        val seg = _uiState.value.currentSkipSegment ?: return
+        autoSkippedSegmentTypes.add(seg.type)
+        _uiState.value = _uiState.value.copy(currentSkipSegment = null)
+    }
+
+    private fun loadSkipSegments(
+        mediaId: String,
+        title: String,
+        type: MediaType,
+        year: String?,
+        seasonNumber: Int,
+        episodeNumber: Int
+    ) {
+        skipSegmentsJob?.cancel()
+        skipSegmentsJob = viewModelScope.launch(Dispatchers.IO) {
+            val segments = try {
+                repository.getSkipSegments(
+                    mediaId = mediaId,
+                    title = title,
+                    type = type,
+                    year = year,
+                    seasonNumber = seasonNumber,
+                    episodeNumber = episodeNumber
+                )
+            } catch (_: Exception) {
+                emptyList()
+            }
+            _uiState.value = _uiState.value.copy(
+                skipSegments = segments,
+                currentSkipSegment = null
+            )
         }
     }
 
@@ -1157,9 +1409,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val isSeries = s.mediaType == MediaType.SERIES || s.mediaType == MediaType.ANIME || s.mediaType == MediaType.DRAMA
                 val cleanTitle = if (isSeries) {
                     s.mediaTitle
-                        .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
-                        .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
-                        .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+                        .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+                        .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+                        .replace(Regex("""\s*\(\d{4}\)"""), "")
                         .trim()
                         .ifBlank { s.mediaTitle }
                 } else {

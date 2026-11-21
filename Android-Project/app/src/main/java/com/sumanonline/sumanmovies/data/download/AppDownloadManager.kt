@@ -345,6 +345,9 @@ class AppDownloadManager(
         if (stream.provider.isNotBlank()) {
             enrichedHeaders["__stream_provider"] = stream.provider
         }
+        if (!stream.audioLangs.isNullOrBlank()) {
+            enrichedHeaders["__stream_audio_lang"] = stream.audioLangs!!
+        }
 
         val downloadEntity = DownloadEntity(
             id = entityId,
@@ -577,7 +580,17 @@ class AppDownloadManager(
 
             var resp = httpClient.newCall(buildRequest(currentUrl, currentHeaders, existingBytes)).execute()
 
-            if (!resp.isSuccessful && (resp.code == 401 || resp.code == 403 || resp.code == 404 || resp.code == 410)) {
+            var rateLimitRetries = 0
+            while (resp.code == 429 && rateLimitRetries < 3) {
+                resp.close()
+                val retryAfterHeader = resp.header("Retry-After")?.toLongOrNull()?.coerceIn(1L, 10L)
+                val backoffSec = retryAfterHeader ?: ((rateLimitRetries + 1) * 2L)
+                kotlinx.coroutines.delay(backoffSec * 1000L)
+                rateLimitRetries++
+                resp = httpClient.newCall(buildRequest(currentUrl, currentHeaders, existingBytes)).execute()
+            }
+
+            if (!resp.isSuccessful && (resp.code == 401 || resp.code == 403 || resp.code == 404 || resp.code == 410 || resp.code == 429)) {
                 resp.close()
                 val refreshed = refreshStreamSource(entity)
                 if (refreshed != null && refreshed.url.isNotBlank()) {
@@ -590,11 +603,23 @@ class AppDownloadManager(
                     if (refreshed.provider.isNotBlank()) {
                         currentHeaders["__stream_provider"] = refreshed.provider
                     }
+                    if (!refreshed.audioLangs.isNullOrBlank()) {
+                        currentHeaders["__stream_audio_lang"] = refreshed.audioLangs!!
+                    }
                     val updatedEntity = entity.copy(
                         streamUrl = currentUrl,
                         headersJson = serializeHeaders(currentHeaders)
                     )
                     downloadDao.insert(updatedEntity)
+
+                    val isRefreshedHls = currentHeaders["__stream_format"].equals("HLS", ignoreCase = true) ||
+                            HlsPlaylistParser.isHlsUrl(currentUrl) ||
+                            currentUrl.contains(".m3u8", ignoreCase = true)
+                    if (isRefreshedHls) {
+                        runHlsDownload(updatedEntity, targetFile, currentUrl, currentHeaders)
+                        return@withContext
+                    }
+
                     resp = httpClient.newCall(buildRequest(currentUrl, currentHeaders, existingBytes)).execute()
                 }
             }
@@ -911,6 +936,7 @@ class AppDownloadManager(
             val isSeries = entity.mediaType.equals("SERIES", ignoreCase = true) || entity.seasonNumber > 0
             val entityHeaders = deserializeHeaders(entity.headersJson)
             val providerName = entityHeaders["__stream_provider"] ?: ""
+            val wantAudioLang = entityHeaders["__stream_audio_lang"] ?: ""
             val targetServer = when {
                 providerName.contains("4khdhub", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.FOURKHDHUB
                 providerName.contains("hdhub4u", ignoreCase = true) -> com.sumanonline.sumanmovies.data.models.StreamingServer.HDHUB4U
@@ -931,6 +957,11 @@ class AppDownloadManager(
 
             val freshStreams = resolved.streams
             if (freshStreams.isNotEmpty()) {
+                val candidateStreams = if (wantAudioLang.isNotBlank()) {
+                    val matching = freshStreams.filter { it.audioLangs.equals(wantAudioLang, ignoreCase = true) }
+                    matching.ifEmpty { freshStreams }
+                } else freshStreams
+
                 val wantFormat = entityHeaders["__stream_format"] ?: ""
                 val isHlsPreferred = wantFormat.equals("HLS", ignoreCase = true) ||
                         entity.quality.contains("HLS", ignoreCase = true) ||
@@ -939,19 +970,21 @@ class AppDownloadManager(
                         entity.streamUrl.contains("wefeed", ignoreCase = true)
 
                 val matched = if (isHlsPreferred) {
-                    freshStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) && it.quality.contains(entity.quality.take(4), ignoreCase = true) }
-                        ?: freshStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) }
-                        ?: freshStreams.firstOrNull { it.quality.contains(entity.quality.take(4), ignoreCase = true) }
-                        ?: freshStreams.firstOrNull()
+                    candidateStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) && it.quality.contains(entity.quality.take(4), ignoreCase = true) }
+                        ?: candidateStreams.firstOrNull { it.format.equals("HLS", ignoreCase = true) }
+                        ?: candidateStreams.firstOrNull { it.quality.contains(entity.quality.take(4), ignoreCase = true) }
+                        ?: candidateStreams.firstOrNull()
                 } else {
-                    freshStreams.firstOrNull {
+                    candidateStreams.firstOrNull {
                         (it.directFile || it.format.equals("MP4", ignoreCase = true)) &&
                                 it.quality.contains(entity.quality.take(4), ignoreCase = true)
-                    } ?: freshStreams.firstOrNull {
+                    } ?: candidateStreams.firstOrNull {
                         it.directFile || it.format.equals("MP4", ignoreCase = true)
-                    } ?: freshStreams.firstOrNull {
+                    } ?: candidateStreams.firstOrNull {
+                        it.format.equals("HLS", ignoreCase = true) && it.quality.contains(entity.quality.take(4), ignoreCase = true)
+                    } ?: candidateStreams.firstOrNull {
                         it.quality.contains(entity.quality.take(4), ignoreCase = true)
-                    } ?: freshStreams.firstOrNull()
+                    } ?: candidateStreams.firstOrNull()
                 }
 
                 return@withContext matched
@@ -1034,7 +1067,10 @@ class AppDownloadManager(
             var manifestReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
             var manifestResp = httpClient.newCall(manifestReq).execute()
 
-            if (!manifestResp.isSuccessful && (manifestResp.code in listOf(401, 403, 404, 410))) {
+            if (!manifestResp.isSuccessful && (manifestResp.code in listOf(401, 403, 404, 410, 429))) {
+                if (manifestResp.code == 429) {
+                    kotlinx.coroutines.delay(2000L)
+                }
                 manifestResp.close()
                 val refreshed = refreshStreamSource(entity)
                 if (refreshed != null && refreshed.url.isNotBlank()) {
@@ -1043,6 +1079,7 @@ class AppDownloadManager(
                     currentHeaders.putAll(refreshed.headers)
                     if (refreshed.format.isNotBlank()) currentHeaders["__stream_format"] = refreshed.format
                     if (refreshed.provider.isNotBlank()) currentHeaders["__stream_provider"] = refreshed.provider
+                    if (!refreshed.audioLangs.isNullOrBlank()) currentHeaders["__stream_audio_lang"] = refreshed.audioLangs!!
                     val updatedEntity = entity.copy(
                         streamUrl = resolvedMediaPlaylistUrl,
                         headersJson = serializeHeaders(currentHeaders)
@@ -1080,7 +1117,10 @@ class AppDownloadManager(
                 var mediaReq = buildRequest(resolvedMediaPlaylistUrl, currentHeaders, 0L)
                 var mediaResp = httpClient.newCall(mediaReq).execute()
 
-                if (!mediaResp.isSuccessful && (mediaResp.code in listOf(401, 403, 404, 410))) {
+                if (!mediaResp.isSuccessful && (mediaResp.code in listOf(401, 403, 404, 410, 429))) {
+                    if (mediaResp.code == 429) {
+                        kotlinx.coroutines.delay(2000L)
+                    }
                     mediaResp.close()
                     val refreshed = refreshStreamSource(entity)
                     if (refreshed != null && refreshed.url.isNotBlank()) {
@@ -1088,6 +1128,7 @@ class AppDownloadManager(
                         currentHeaders.putAll(refreshed.headers)
                         if (refreshed.format.isNotBlank()) currentHeaders["__stream_format"] = refreshed.format
                         if (refreshed.provider.isNotBlank()) currentHeaders["__stream_provider"] = refreshed.provider
+                        if (!refreshed.audioLangs.isNullOrBlank()) currentHeaders["__stream_audio_lang"] = refreshed.audioLangs!!
                         val updatedEntity = entity.copy(
                             streamUrl = refreshed.url,
                             headersJson = serializeHeaders(currentHeaders)

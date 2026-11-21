@@ -35,16 +35,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.FilterListOff
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -76,9 +82,13 @@ import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.ui.components.GenreCard
 import com.sumanonline.sumanmovies.ui.components.VerticalPosterCard
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
+import com.sumanonline.sumanmovies.ui.theme.CardDark
+import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
 import com.sumanonline.sumanmovies.ui.theme.TextPrimary
+import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,7 +98,12 @@ fun CatalogScreen(
     modifier: Modifier = Modifier,
     onNavigateToPlay4U: (() -> Unit)? = null,
     onNavigateToMovieBox: (() -> Unit)? = null,
+    onNavigateToKMDL: (() -> Unit)? = null,
+    onNavigateToMoviesLeech: (() -> Unit)? = null,
+    onNavigateToMoviesMod: (() -> Unit)? = null,
     onNavigateToLiveTv: (() -> Unit)? = null,
+    onNavigateToAllProviders: (() -> Unit)? = null,
+    onNavigateToCategory: ((String, String) -> Unit)? = null,
     onGenreClick: ((String) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -268,9 +283,9 @@ fun CatalogScreen(
                                     modifier = Modifier
                                         .height(32.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF131926))
+                                        .background(CardElevated)
                                         .border(
-                                            BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+                                            BorderStroke(1.dp, BorderDark),
                                             RoundedCornerShape(8.dp)
                                         )
                                         .clickable { viewModel.onChipClick(term) }
@@ -283,7 +298,7 @@ fun CatalogScreen(
                                         Icon(
                                             imageVector = Icons.Default.History,
                                             contentDescription = null,
-                                            tint = Color(0xFF64748B),
+                                            tint = TextMuted,
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
@@ -297,7 +312,7 @@ fun CatalogScreen(
                                         Icon(
                                             imageVector = Icons.Default.Close,
                                             contentDescription = "Remove",
-                                            tint = Color(0xFF64748B),
+                                            tint = TextMuted,
                                             modifier = Modifier
                                                 .size(13.dp)
                                                 .clickable { viewModel.removeHistoryItem(term) }
@@ -311,7 +326,11 @@ fun CatalogScreen(
                 }
 
                 item {
-                    CatalogSectionTitle(title = "Streaming Providers")
+                    CatalogSectionTitle(
+                        title = "Streaming Providers",
+                        actionLabel = "See all",
+                        onActionClick = { onNavigateToAllProviders?.invoke() }
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
@@ -344,8 +363,92 @@ fun CatalogScreen(
 
                         item {
                             ProviderHubCard(
-                                title = "SumanMovies",
-                                badge = "Live TV",
+                                title = "KMDL",
+                                badge = "Cloud MKV",
+                                description = "Direct Google Drive cloud streams & lossless MKV",
+                                icon = Icons.Default.Cloud,
+                                accentColor = accent,
+                                onClick = { onNavigateToKMDL?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "MoviesLeech",
+                                badge = "1080p / 4K",
+                                description = "Bollywood, Indian & South Cinema • Fast CDN",
+                                icon = Icons.Default.CloudDownload,
+                                accentColor = accent,
+                                onClick = { onNavigateToMoviesLeech?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "MoviesMod",
+                                badge = "Dual Audio",
+                                description = "Dual Audio Cinema & Web Series • Direct CDN",
+                                icon = Icons.Default.VideoLibrary,
+                                accentColor = accent,
+                                onClick = { onNavigateToMoviesMod?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "HDHub4u",
+                                badge = "1080p / 4K",
+                                description = "High-speed Bollywood, Hollywood & dual-audio releases",
+                                icon = Icons.Default.CloudDownload,
+                                accentColor = accent,
+                                onClick = { onNavigateToCategory?.invoke("indian_cinema", "HDHub4u - Bollywood & Dual Audio") ?: onNavigateToAllProviders?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "4KHDHub",
+                                badge = "4K Ultra HD",
+                                description = "Ultra HD 4K & 1080p cinema collection with direct streams",
+                                icon = Icons.Default.HighQuality,
+                                accentColor = accent,
+                                onClick = { onNavigateToCategory?.invoke("top_rated", "4KHDHub - Ultra HD Cinema") ?: onNavigateToAllProviders?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "Dramachi",
+                                badge = "Dramas & Series",
+                                description = "Asian dramas, K-dramas, C-dramas & multi-language series",
+                                icon = Icons.Default.Subtitles,
+                                accentColor = accent,
+                                onClick = { onNavigateToCategory?.invoke("k_drama", "Dramachi - Asian Dramas") ?: onNavigateToAllProviders?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "ReAnime",
+                                badge = "Anime HD",
+                                description = "High-definition anime series, continuous seasons & movies",
+                                icon = Icons.Default.AutoAwesome,
+                                accentColor = accent,
+                                onClick = { onNavigateToCategory?.invoke("popular_anime", "ReAnime - Anime HD") ?: onNavigateToAllProviders?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "IpTV",
+                                badge = "500+ Channels",
                                 description = "500+ HD Live TV channels, sports, news & entertainment",
                                 icon = Icons.Default.LiveTv,
                                 accentColor = accent,
@@ -411,7 +514,7 @@ fun CatalogScreen(
         ModalBottomSheet(
             onDismissRequest = { viewModel.closeFilterSheet() },
             sheetState = sheetState,
-            containerColor = Color(0xFF131926),
+            containerColor = CardElevated,
             contentColor = TextPrimary,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
             dragHandle = {
@@ -421,7 +524,7 @@ fun CatalogScreen(
                         .width(42.dp)
                         .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(Color.White.copy(alpha = 0.25f))
+                        .background(BorderDark)
                 )
             }
         ) {
@@ -500,9 +603,9 @@ private fun ActiveFiltersRow(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.05f))
+                        .background(CardElevated)
                         .border(
-                            BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                            BorderStroke(1.dp, BorderDark),
                             RoundedCornerShape(20.dp)
                         )
                         .clickable { onClearAll() }
@@ -538,7 +641,7 @@ private fun ActiveSearchFilterChip(
     ) {
         Text(
             text = label,
-            color = Color.White,
+            color = TextPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium
         )
@@ -546,7 +649,7 @@ private fun ActiveSearchFilterChip(
         Icon(
             imageVector = Icons.Default.Close,
             contentDescription = "Remove",
-            tint = Color.White.copy(alpha = 0.7f),
+            tint = TextSecondary,
             modifier = Modifier.size(13.dp)
         )
     }
@@ -752,9 +855,9 @@ private fun SearchFilterPill(
     accent: Color,
     onClick: () -> Unit
 ) {
-    val bg = if (isSelected) accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f)
-    val border = if (isSelected) BorderStroke(1.2.dp, accent) else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-    val textColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f)
+    val bg = if (isSelected) accent.copy(alpha = 0.15f) else CardDark
+    val border = if (isSelected) BorderStroke(1.2.dp, accent) else BorderStroke(1.dp, BorderDark)
+    val textColor = if (isSelected) accent else TextPrimary
 
     Row(
         modifier = Modifier
@@ -809,7 +912,7 @@ private fun CatalogSectionTitle(
         if ((actionLabel != null) && (onActionClick != null)) {
             Text(
                 text = actionLabel,
-                color = Color(0xFF64748B),
+                color = TextMuted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier
@@ -863,9 +966,9 @@ private fun SearchHeader(
                     .weight(1f)
                     .height(48.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF131926))
+                    .background(CardElevated)
                     .border(
-                        BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+                        BorderStroke(1.dp, BorderDark),
                         RoundedCornerShape(12.dp)
                     )
                     .padding(horizontal = 14.dp),
@@ -888,7 +991,7 @@ private fun SearchHeader(
                         if (query.isEmpty()) {
                             Text(
                                 text = "Search movies, series, directors...",
-                                color = Color(0xFF64748B),
+                                color = TextMuted,
                                 fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -921,7 +1024,7 @@ private fun SearchHeader(
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Clear",
-                                tint = Color(0xFF64748B),
+                                tint = TextMuted,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -935,11 +1038,11 @@ private fun SearchHeader(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF131926))
+                    .background(CardElevated)
                     .border(
                         BorderStroke(
                             1.dp,
-                            if (hasActiveFilters) accent.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.07f)
+                            if (hasActiveFilters) accent.copy(alpha = 0.6f) else BorderDark
                         ),
                         RoundedCornerShape(12.dp)
                     )
@@ -949,7 +1052,7 @@ private fun SearchHeader(
                 Icon(
                     imageVector = Icons.Default.Tune,
                     contentDescription = "Filter & Sort",
-                    tint = if (hasActiveFilters) accent else Color(0xFF94A3B8),
+                    tint = if (hasActiveFilters) accent else TextSecondary,
                     modifier = Modifier.size(18.dp)
                 )
                 if (hasActiveFilters) {
@@ -982,9 +1085,9 @@ private fun ProviderHubCard(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF131926))
+            .background(CardElevated)
             .border(
-                BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+                BorderStroke(1.dp, BorderDark),
                 RoundedCornerShape(12.dp)
             )
             .clickable(onClick = onClick)
@@ -1002,25 +1105,25 @@ private fun ProviderHubCard(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1E293B)),
+                        .background(CardDark),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = title,
-                        tint = Color(0xFF94A3B8),
+                        tint = TextSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                 }
 
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF1E293B),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+                    color = CardDark,
+                    border = BorderStroke(1.dp, BorderDark)
                 ) {
                     Text(
                         text = badge,
-                        color = Color(0xFF94A3B8),
+                        color = TextSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1042,7 +1145,7 @@ private fun ProviderHubCard(
 
             Text(
                 text = description,
-                color = Color(0xFF94A3B8),
+                color = TextSecondary,
                 fontSize = 12.sp,
                 lineHeight = 16.sp,
                 maxLines = 2,

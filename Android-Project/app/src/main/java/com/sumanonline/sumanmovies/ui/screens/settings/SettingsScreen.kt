@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
@@ -142,7 +143,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                        .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
                 ) {
                     SettingsSwitchItem(
                         icon = Icons.Default.PlayCircle,
@@ -151,6 +152,24 @@ fun SettingsScreen(
                         checked = state.autoPlayNextEpisode,
                         accentColor = accent,
                         onCheckedChange = { viewModel.toggleAutoPlay() }
+                    )
+                    SettingsDivider()
+                    SettingsSwitchItem(
+                        icon = Icons.Default.FastForward,
+                        title = "Auto-skip intro",
+                        subtitle = "Automatically skip show intros and recaps powered by TheIntroDB.",
+                        checked = state.autoSkipIntro,
+                        accentColor = accent,
+                        onCheckedChange = { viewModel.toggleAutoSkipIntro() }
+                    )
+                    SettingsDivider()
+                    SettingsSwitchItem(
+                        icon = Icons.Default.FastForward,
+                        title = "Auto-skip outro / credits",
+                        subtitle = "Automatically skip ending credits on movies and series.",
+                        checked = state.autoSkipCredits,
+                        accentColor = accent,
+                        onCheckedChange = { viewModel.toggleAutoSkipCredits() }
                     )
                     SettingsDivider()
                     SettingsValueItem(
@@ -221,7 +240,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                        .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
                 ) {
                     SettingsValueItem(
                         icon = Icons.Default.Speed,
@@ -274,7 +293,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                        .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
                 ) {
                     SettingsActionItem(
                         icon = Icons.Default.Storage,
@@ -309,7 +328,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardElevated)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                        .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -412,7 +431,9 @@ fun SettingsScreen(
                     Text("Close", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -450,7 +471,9 @@ fun SettingsScreen(
                     Text("Close", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -489,7 +512,9 @@ fun SettingsScreen(
                     Text("Close", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -528,7 +553,9 @@ fun SettingsScreen(
                     Text("Close", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -572,7 +599,9 @@ fun SettingsScreen(
                     Text("Close", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -607,11 +636,16 @@ fun SettingsScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { viewModel.dismissUpdateDialog() }) {
+                OutlinedButton(
+                    onClick = { viewModel.dismissUpdateDialog() },
+                    border = BorderStroke(1.dp, BorderDark)
+                ) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -632,7 +666,9 @@ fun SettingsScreen(
                     Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -673,7 +709,7 @@ private fun SettingsDivider() {
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(BgDark)
+            .background(BorderDark)
     )
 }
 
@@ -706,9 +742,9 @@ private fun SettingsSwitchItem(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = accentColor,
                 checkedBorderColor = Color.Transparent,
-                uncheckedThumbColor = Color(0xFFE2E8F0),
-                uncheckedTrackColor = Color(0xFF262A36),
-                uncheckedBorderColor = Color(0xFF4A5568)
+                uncheckedThumbColor = TextMuted,
+                uncheckedTrackColor = BgDark,
+                uncheckedBorderColor = BorderDark
             )
         )
     }
@@ -730,7 +766,7 @@ private fun AnimatedConfirmClearDialog(
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF1B1B22))
+                    .background(CardElevated)
                     .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.25f), RoundedCornerShape(20.dp))
                     .padding(22.dp)
             ) {
@@ -784,7 +820,7 @@ private fun AnimatedConfirmClearDialog(
                                 .height(44.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+                            border = BorderStroke(1.dp, BorderDark)
                         ) {
                             Text("Cancel", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
                         }

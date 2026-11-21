@@ -173,7 +173,7 @@ fun DownloadFullScreenModal(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color(0xFF0D0E15)
+            color = Color(0xFF08080A)
         ) {
             Column(
                 modifier = Modifier
@@ -294,12 +294,15 @@ fun DownloadFullScreenModal(
                             StreamingServer.FOURKHDHUB -> "4KHub4U"
                             StreamingServer.DRAMACHI -> "Dramachi"
                             StreamingServer.REANIME -> "ReAnime"
+                            StreamingServer.KMDL -> "KMDL"
+                            StreamingServer.MOVIESLEECH -> "MoviesLeech"
+                            StreamingServer.MOVIESMOD -> "MoviesMod"
                         }
 
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(if (isSelected) Color(0xFFE50914) else Color(0xFF1E2130))
+                                .background(if (isSelected) Color(0xFFE50914) else Color(0xFF16161D))
                                 .clickable { onSelectServer(srv) }
                                 .padding(horizontal = 20.dp, vertical = 9.dp)
                         ) {
@@ -457,8 +460,8 @@ fun DownloadFullScreenModal(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF131520))
-                                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                                    .background(Color(0xFF121217))
+                                    .border(1.dp, Color(0xFF1F1F27), RoundedCornerShape(16.dp))
                             ) {
                                 Column {
                                     Row(
@@ -597,8 +600,8 @@ fun DownloadOptionCardV2(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF181B28))
-            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(12.dp))
+            .background(Color(0xFF16161E))
+            .border(1.dp, Color(0xFF1F1F27), RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
         Column {

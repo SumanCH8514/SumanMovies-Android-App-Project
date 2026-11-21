@@ -30,7 +30,9 @@ object MediaMatcher {
     )
 
     fun normalizeForMatching(text: String): String {
-        return text.lowercase()
+        val decomposed = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        return stripped.lowercase()
             .replace(Regex("""\s*\(\d{4}\)"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
@@ -50,7 +52,9 @@ object MediaMatcher {
     }
 
     fun buildSearchQueries(title: String): List<String> {
-        val cleanFull = title
+        val decomposed = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        val cleanFull = stripped
             .replace(Regex("""\s*\(\d{4}\)"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")

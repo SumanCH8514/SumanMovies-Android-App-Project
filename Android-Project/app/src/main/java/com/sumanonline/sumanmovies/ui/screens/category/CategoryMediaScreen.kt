@@ -75,10 +75,13 @@ import coil.compose.AsyncImage
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
+import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
 import com.sumanonline.sumanmovies.ui.theme.TextPrimary
+import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -421,7 +424,14 @@ fun CategoryMediaScreen(
 
                         val meta = buildString {
                             if (!item.year.isNullOrBlank()) append("${item.year} • ")
-                            append(if (item.mediaType == MediaType.MOVIE) "movies" else "series")
+                            append(
+                                when (item.mediaType) {
+                                    MediaType.MOVIE -> "Movie"
+                                    MediaType.ANIME -> "Anime"
+                                    MediaType.DRAMA -> "Drama"
+                                    else -> "Series"
+                                }
+                            )
                         }
 
                         Text(
@@ -521,7 +531,7 @@ fun CategoryMediaScreen(
         ModalBottomSheet(
             onDismissRequest = { viewModel.closeFilterSheet() },
             sheetState = sheetState,
-            containerColor = Color(0xFF131926),
+            containerColor = CardElevated,
             contentColor = TextPrimary,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
             dragHandle = {
@@ -531,7 +541,7 @@ fun CategoryMediaScreen(
                         .width(42.dp)
                         .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(Color.White.copy(alpha = 0.25f))
+                        .background(BorderDark)
                 )
             }
         ) {
@@ -565,7 +575,7 @@ private fun ActiveFilterChip(
     ) {
         Text(
             text = label,
-            color = Color.White,
+            color = TextPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium
         )
@@ -573,7 +583,7 @@ private fun ActiveFilterChip(
         Icon(
             imageVector = Icons.Default.Close,
             contentDescription = "Remove",
-            tint = Color.White.copy(alpha = 0.7f),
+            tint = TextSecondary,
             modifier = Modifier.size(13.dp)
         )
     }
@@ -750,9 +760,9 @@ private fun FilterSelectablePill(
     accent: Color,
     onClick: () -> Unit
 ) {
-    val bg = if (isSelected) accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f)
-    val border = if (isSelected) BorderStroke(1.2.dp, accent) else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-    val textColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f)
+    val bg = if (isSelected) accent.copy(alpha = 0.15f) else CardDark
+    val border = if (isSelected) BorderStroke(1.2.dp, accent) else BorderStroke(1.dp, BorderDark)
+    val textColor = if (isSelected) accent else TextPrimary
 
     Row(
         modifier = Modifier

@@ -110,7 +110,7 @@ fun ActivityScreen(
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            containerColor = Color(0xFF131926),
+            containerColor = CardElevated,
             titleContentColor = TextPrimary,
             textContentColor = TextSecondary,
             title = {
@@ -496,8 +496,6 @@ private fun ActivityHistoryCard(
                     .clip(RoundedCornerShape(10.dp))
                     .background(CardElevated)
             ) {
-                // For series: prefer episode still → backdrop → poster
-                // For movies: prefer backdrop → poster
                 val displayImage = if (isMovie) {
                     item.backdropUrl?.takeIf { it.isNotBlank() } ?: item.posterUrl
                 } else {

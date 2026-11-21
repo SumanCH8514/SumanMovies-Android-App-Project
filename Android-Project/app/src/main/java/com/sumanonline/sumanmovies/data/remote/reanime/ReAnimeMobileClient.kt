@@ -37,7 +37,9 @@ class ReAnimeMobileClient {
     private val mirrors = listOf("https://reanime.wtf", "https://reindex.to", "https://reanime.cz")
 
     suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
-        val trimmed = query.trim()
+        val decomposed = java.text.Normalizer.normalize(query, java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        val trimmed = stripped.trim()
         if (trimmed.isBlank()) return@withContext emptyList()
 
         val anilistResults = searchAniList(trimmed)
@@ -113,6 +115,8 @@ class ReAnimeMobileClient {
                     val year = obj.get("seasonYear")?.takeIf { !it.isJsonNull }?.asInt?.toString()
                     val desc = obj.get("description")?.takeIf { !it.isJsonNull }?.asString
                     val score = obj.get("averageScore")?.takeIf { !it.isJsonNull }?.asDouble?.let { (it / 10.0) }
+                    val format = obj.get("format")?.takeIf { !it.isJsonNull }?.asString
+                    val isMovieItem = format.equals("MOVIE", ignoreCase = true)
 
                     val genres = mutableListOf<String>()
                     obj.getAsJsonArray("genres")?.forEach { g ->
@@ -123,7 +127,7 @@ class ReAnimeMobileClient {
                         MediaItem(
                             id = "reanime:$id",
                             title = title,
-                            mediaType = MediaType.SERIES,
+                            mediaType = if (isMovieItem) MediaType.MOVIE else MediaType.SERIES,
                             year = year,
                             posterUrl = poster,
                             backdropUrl = banner,
@@ -183,22 +187,57 @@ class ReAnimeMobileClient {
         return emptyList()
     }
 
-    suspend fun resolveAniListId(title: String, releaseYear: String? = null): Int? = withContext(Dispatchers.IO) {
-        val clean = title
+    suspend fun resolveAniListId(
+        title: String,
+        releaseYear: String? = null,
+        season: Int = 1,
+        isMovie: Boolean = false
+    ): Int? = withContext(Dispatchers.IO) {
+        val decomposed = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        val clean = stripped
             .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
             .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
             .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\s*\(\d{4}\)"""), "")
-            .replace("é", "e")
-            .replace("É", "E")
             .trim()
 
-        try {
+        if (clean.isBlank()) return@withContext null
+
+        if (season > 1 && !isMovie) {
+            val seasonVariants = listOf(
+                "$clean Season $season",
+                "$clean $season",
+                "$clean S$season"
+            )
+            for (v in seasonVariants) {
+                val candidateId = queryAniListSingle(v, releaseYear, isSeasonQuery = true, isMovie = false)
+                if (candidateId != null) {
+                    return@withContext candidateId
+                }
+            }
+        }
+
+        queryAniListSingle(clean, releaseYear, isSeasonQuery = false, isMovie = isMovie)
+            ?: queryAniListSingle(clean, null, isSeasonQuery = false, isMovie = isMovie)
+    }
+
+    private fun queryAniListSingle(
+        query: String,
+        releaseYear: String? = null,
+        isSeasonQuery: Boolean = false,
+        isMovie: Boolean = false
+    ): Int? {
+        return try {
+            val formats = if (isMovie) "[MOVIE]" else "[TV, TV_SHORT, ONA]"
             val q = """
                 query (${'$'}search: String) {
-                  Media (search: ${'$'}search, type: ANIME) {
+                  Media (search: ${'$'}search, type: ANIME, format_in: $formats) {
                     id
+                    seasonYear
+                    format
+                    title { english romaji userPreferred }
                   }
                 }
             """.trimIndent()
@@ -206,7 +245,7 @@ class ReAnimeMobileClient {
             val payload = JsonObject().apply {
                 addProperty("query", q)
                 val vars = JsonObject().apply {
-                    addProperty("search", clean)
+                    addProperty("search", query)
                 }
                 add("variables", vars)
             }.toString()
@@ -219,17 +258,40 @@ class ReAnimeMobileClient {
                 .build()
 
             client.newCall(request).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val str = resp.body?.string() ?: return@withContext null
-                    val root = JsonParser.parseString(str).asJsonObject
-                    val data = root.getAsJsonObject("data") ?: return@withContext null
-                    val media = data.getAsJsonObject("Media") ?: return@withContext null
-                    return@withContext media.get("id")?.asInt
+                if (!resp.isSuccessful) return null
+                val str = resp.body?.string() ?: return null
+                val root = JsonParser.parseString(str).asJsonObject
+                val data = root.getAsJsonObject("data") ?: return null
+                val media = data.getAsJsonObject("Media") ?: return null
+                val format = media.get("format")?.takeIf { !it.isJsonNull }?.asString
+                if (!isMovie && format.equals("MOVIE", ignoreCase = true)) {
+                    return null
                 }
+                val targetYear = releaseYear?.toIntOrNull()
+                val matchedYear = media.get("seasonYear")?.takeIf { !it.isJsonNull }?.asInt
+                if (targetYear != null && matchedYear != null && kotlin.math.abs(matchedYear - targetYear) > 4) {
+                    return null
+                }
+                val titleObj = media.getAsJsonObject("title")
+                val candTitle = titleObj?.get("english")?.takeIf { !it.isJsonNull }?.asString
+                    ?: titleObj?.get("userPreferred")?.takeIf { !it.isJsonNull }?.asString
+                    ?: titleObj?.get("romaji")?.takeIf { !it.isJsonNull }?.asString
+                    ?: ""
+                val genericWords = setOf("season", "s", "part", "pt", "2nd", "3rd", "4th", "5th", "ii", "iii", "iv", "v", "the", "a", "an", "tv", "cour", "act")
+                val qTokens = Regex("""\b[a-z0-9]+\b""").findAll(query.lowercase()).map { it.value }.filter { it !in genericWords && !it.all { ch -> ch.isDigit() } }.toSet()
+                val cTokens = Regex("""\b[a-z0-9]+\b""").findAll(candTitle.lowercase()).map { it.value }.filter { it !in genericWords && !it.all { ch -> ch.isDigit() } }.toSet()
+                val extraWords = cTokens - qTokens
+                if (!isMovie && extraWords.any { it in setOf("movie", "prison", "blood", "movie5", "film", "special") }) {
+                    return null
+                }
+                if (isSeasonQuery && extraWords.isNotEmpty()) {
+                    return null
+                }
+                media.get("id")?.asInt
             }
-        } catch (_: Exception) {}
-
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     suspend fun resolveStreams(
@@ -237,35 +299,63 @@ class ReAnimeMobileClient {
         season: Int = 1,
         episode: Int = 1,
         title: String? = null,
-        releaseYear: String? = null
+        releaseYear: String? = null,
+        absoluteEpisode: Int? = null,
+        isMovie: Boolean = false
     ): Pair<List<StreamSource>, List<SubtitleTrack>> = withContext(Dispatchers.IO) {
         val cleanId = idOrSlug.removePrefix("reanime:").trim()
-        var anilistId = cleanId.toIntOrNull()
+        val decomposed = java.text.Normalizer.normalize(title ?: "", java.text.Normalizer.Form.NFD)
+        val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
+        val cleanTitle = stripped
+            .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+            .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(\d{4}\)"""), "")
+            .trim()
 
-        if (anilistId == null && !title.isNullOrBlank()) {
-            anilistId = resolveAniListId(title, releaseYear)
+        var serverItems = emptyList<FlixServerItem>()
+        var targetAnilistId: Int? = null
+
+        val baseId = cleanId.toIntOrNull()
+            ?: if (!cleanTitle.isNullOrBlank()) resolveAniListId(cleanTitle, releaseYear, 1, isMovie) else null
+            ?: if (cleanId.isNotBlank()) resolveAniListId(cleanId, releaseYear, 1, isMovie) else null
+
+        if (baseId != null && absoluteEpisode != null && absoluteEpisode > 0) {
+            val absServers = fetchFlixServers(baseId, absoluteEpisode)
+            if (absServers.isNotEmpty()) {
+                targetAnilistId = baseId
+                serverItems = absServers
+            }
         }
 
-        if (anilistId == null && cleanId.isNotBlank()) {
-            anilistId = resolveAniListId(cleanId, releaseYear)
+        if (serverItems.isEmpty() && season > 1 && !cleanTitle.isNullOrBlank() && !isMovie) {
+            val seasonalId = resolveAniListId(cleanTitle, releaseYear, season, isMovie = false)
+            if (seasonalId != null && seasonalId != baseId) {
+                val seasonalServers = fetchFlixServers(seasonalId, maxOf(1, episode))
+                if (seasonalServers.isNotEmpty()) {
+                    targetAnilistId = seasonalId
+                    serverItems = seasonalServers
+                }
+            }
         }
 
-        if (anilistId == null) {
-            return@withContext Pair(emptyList(), emptyList())
+        if (serverItems.isEmpty() && baseId != null) {
+            val candidateEp = maxOf(1, episode)
+            val baseServers = fetchFlixServers(baseId, candidateEp)
+            if (baseServers.isNotEmpty()) {
+                targetAnilistId = baseId
+                serverItems = baseServers
+            }
         }
 
-        val targetEp = maxOf(1, episode)
-        var serverItems = fetchFlixServers(anilistId, targetEp)
-        if (serverItems.isEmpty() && targetEp > 1) {
-            serverItems = fetchFlixServers(anilistId, 1)
-        }
-
-        if (serverItems.isEmpty()) {
+        if (serverItems.isEmpty() || targetAnilistId == null) {
             return@withContext Pair(emptyList(), emptyList())
         }
 
         val streams = mutableListOf<StreamSource>()
         val seenUrls = mutableSetOf<String>()
+        val seenAccessKeys = mutableSetOf<String>()
 
         val dubServers = serverItems.filter { (it.dataType ?: "").equals("dub", ignoreCase = true) }
         val subServers = serverItems.filter { !(it.dataType ?: "").equals("dub", ignoreCase = true) }
@@ -281,11 +371,13 @@ class ReAnimeMobileClient {
             if (accessId.isBlank()) continue
 
             val isDub = (srv.dataType ?: "").equals("dub", ignoreCase = true)
+            val accessKey = "$accessId:$isDub"
+            if (!seenAccessKeys.add(accessKey)) continue
+
             val directStreams = resolveFlixDirectMkv(accessId, isDub)
             for (st in directStreams) {
                 val dedupeKey = "${st.url}#${st.quality}#${st.audioLangs}"
-                if (!seenUrls.contains(dedupeKey)) {
-                    seenUrls.add(dedupeKey)
+                if (seenUrls.add(dedupeKey)) {
                     streams.add(st)
                 }
             }
@@ -428,12 +520,14 @@ class ReAnimeMobileClient {
                 val directCdnUrl = redirectClient.newCall(dlRequest).execute().use { dlResp ->
                     if (dlResp.code in 300..399) {
                         dlResp.header("Location")
+                    } else if (dlResp.code == 200) {
+                        downloadUrl
                     } else null
                 } ?: client.newCall(dlRequest).execute().use { dlResp ->
-                    dlResp.request.url.toString()
+                    if (dlResp.isSuccessful) dlResp.request.url.toString() else null
                 }
 
-                if (directCdnUrl.isNullOrBlank() || directCdnUrl.contains("/download/")) {
+                if (directCdnUrl.isNullOrBlank()) {
                     return emptyList()
                 }
 

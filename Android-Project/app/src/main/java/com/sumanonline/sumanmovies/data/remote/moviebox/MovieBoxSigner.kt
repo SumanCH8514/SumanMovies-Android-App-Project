@@ -1,9 +1,11 @@
 package com.sumanonline.sumanmovies.data.remote.moviebox
 
-import android.net.Uri
-import android.util.Base64
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Base64
+import java.util.Locale
+import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
@@ -22,6 +24,20 @@ object MovieBoxSigner {
     private const val BUILD_TAG_SALT = "oneroom"
     private const val SIGNATURE_BODY_MAX_BYTES = 102400
 
+    private val IP_PREFIXES = listOf(
+        "103.241", "49.36", "117.195", "106.198", "122.162",
+        "157.32", "182.70", "103.58", "27.60", "59.90"
+    )
+
+    private val cachedDeviceId: String by lazy {
+        val chars = "0123456789abcdef"
+        (1..32).map { chars[Random.nextInt(chars.length)] }.joinToString("")
+    }
+
+    private val cachedGaid: String by lazy {
+        UUID.randomUUID().toString()
+    }
+
     fun md5Hex(data: ByteArray): String {
         val digest = MessageDigest.getInstance("MD5").digest(data)
         return digest.joinToString("") { "%02x".format(it) }
@@ -35,7 +51,7 @@ object MovieBoxSigner {
         val mac = Mac.getInstance("HmacMD5")
         mac.init(SecretKeySpec(key, "HmacMD5"))
         val signed = mac.doFinal(message.toByteArray(StandardCharsets.UTF_8))
-        return Base64.encodeToString(signed, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(signed)
     }
 
     fun generateClientToken(ts: Long): String {
@@ -47,7 +63,7 @@ object MovieBoxSigner {
 
     fun generateClientBuild(ts: Long): String {
         val rand = Random.nextInt(1000)
-        val stamp = "${ts / 1000}${String.format(java.util.Locale.US, "%03d", ts % 1000)}000$rand"
+        val stamp = "${ts / 1000}${String.format(Locale.US, "%03d", ts % 1000)}000$rand"
         val hash = md5Hex("$STOCK_CERT_SHA256$BUILD_TAG_SALT$stamp")
         return "$stamp.$hash"
     }
@@ -60,13 +76,23 @@ object MovieBoxSigner {
         body: String?,
         timestampMs: Long
     ): String {
-        val uri = Uri.parse(urlStr)
-        val path = uri.path ?: ""
-        val sortedQuery = uri.queryParameterNames.sorted().joinToString("&") { name ->
-            val value = uri.getQueryParameter(name) ?: ""
-            "$name=$value"
+        val uri = try {
+            URI(urlStr)
+        } catch (_: Exception) {
+            null
         }
-        val canonicalUrl = if (sortedQuery.isNotEmpty()) "$path?$sortedQuery" else path
+        val path = uri?.rawPath ?: if (urlStr.contains("?")) urlStr.substringBefore("?").substringAfter("://").substringAfter("/") else urlStr
+        val fullPath = if (path.startsWith("/")) path else "/$path"
+
+        val rawQuery = uri?.rawQuery ?: if (urlStr.contains("?")) urlStr.substringAfter("?") else ""
+        val sortedQuery = if (rawQuery.isNotBlank()) {
+            rawQuery.split("&")
+                .filter { it.isNotBlank() }
+                .sorted()
+                .joinToString("&")
+        } else ""
+
+        val canonicalUrl = if (sortedQuery.isNotEmpty()) "$fullPath?$sortedQuery" else fullPath
 
         val bodyLength: String
         val bodyHash: String
@@ -102,6 +128,13 @@ object MovieBoxSigner {
 
     fun currentTimestamp(): Long = System.currentTimeMillis() + serverTimeOffsetMs
 
+    fun randomSpoofedIp(): String {
+        val prefix = IP_PREFIXES[Random.nextInt(IP_PREFIXES.size)]
+        val c = Random.nextInt(1, 254)
+        val d = Random.nextInt(1, 254)
+        return "$prefix.$c.$d"
+    }
+
     fun buildSignedHeaders(
         method: String,
         urlStr: String,
@@ -118,11 +151,11 @@ object MovieBoxSigner {
         val buildTag = generateClientBuild(ts)
 
         val clientInfo = """
-            {"package_name":"com.community.oneroom","version_name":"4.0.01.0813.03","version_code":50020120,"os":"android","os_version":"12","install_ch":"ps","device_id":"850cb21e54f003a78223b03b7eb46f5c","install_store":"ps","gaid":"42a97f5a-f9f9-77dc-c951-2bfebe2d2ac1","brand":"Redmi","model":"22101316G","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Kolkata","sp_code":"40401","X-Play-Mode":"2","X-Client-Build":"$buildTag"}
+            {"package_name":"com.community.oneroom","version_name":"4.0.02","version_code":50020126,"os":"android","os_version":"12","install_ch":"ps","device_id":"$cachedDeviceId","install_store":"ps","gaid":"$cachedGaid","brand":"Redmi","model":"22101316G","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Kolkata","sp_code":"40401","X-Play-Mode":"2","X-Client-Build":"$buildTag"}
         """.trimIndent().replace("\n", "")
 
         val headers = mutableMapOf(
-            "User-Agent" to "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)",
+            "User-Agent" to "com.community.oneroom/50020126 (Linux; U; Android 12; en_US; 22101316G; Build/QP1A.191005.007.A3; Cronet/135.0.7012.3)",
             "Accept" to accept,
             "Content-Type" to contentType,
             "Connection" to "keep-alive",
@@ -132,7 +165,8 @@ object MovieBoxSigner {
             "x-client-info" to clientInfo,
             "x-client-status" to "0",
             "X-Play-Mode" to "2",
-            "x-forwarded-for" to "103.241.${Random.nextInt(1, 254)}.${Random.nextInt(1, 254)}"
+            "X-M-Version" to "4.0.02",
+            "x-forwarded-for" to randomSpoofedIp()
         )
 
         if (authToken != null) {

@@ -290,13 +290,13 @@ private fun HeroSlide(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(
                     onClick = onPlayClick,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(22.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accent),
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier.height(44.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
@@ -316,9 +316,9 @@ private fun HeroSlide(
                 IconButton(
                     onClick = onBookmarkClick,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
-                        .background(CardElevated.copy(alpha = 0.8f))
+                        .background(CardElevated.copy(alpha = 0.85f))
                 ) {
                     Icon(
                         imageVector = if (isBookmarked) Icons.Default.Check else Icons.Default.Add,
@@ -331,9 +331,9 @@ private fun HeroSlide(
                 IconButton(
                     onClick = onInfoClick,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
-                        .background(CardElevated.copy(alpha = 0.8f))
+                        .background(CardElevated.copy(alpha = 0.85f))
                 ) {
                     Icon(
                         imageVector = Icons.Default.Info,

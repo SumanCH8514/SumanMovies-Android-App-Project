@@ -41,13 +41,20 @@ import com.sumanonline.sumanmovies.ui.screens.home.HomeViewModel
 import com.sumanonline.sumanmovies.ui.screens.library.LibraryScreen
 import com.sumanonline.sumanmovies.ui.screens.library.LibraryTab
 import com.sumanonline.sumanmovies.ui.screens.library.LibraryViewModel
+import com.sumanonline.sumanmovies.ui.screens.kmdl.KMDLScreen
+import com.sumanonline.sumanmovies.ui.screens.kmdl.KMDLViewModel
 import com.sumanonline.sumanmovies.ui.screens.livetv.LiveTvScreen
 import com.sumanonline.sumanmovies.ui.screens.livetv.LiveTvViewModel
 import com.sumanonline.sumanmovies.ui.screens.moviebox.MovieBoxScreen
 import com.sumanonline.sumanmovies.ui.screens.moviebox.MovieBoxViewModel
+import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechScreen
+import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechViewModel
+import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModScreen
+import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModViewModel
 import com.sumanonline.sumanmovies.ui.screens.player.PlayerActivity
 import com.sumanonline.sumanmovies.ui.screens.play4u.Play4UScreen
 import com.sumanonline.sumanmovies.ui.screens.play4u.Play4UViewModel
+import com.sumanonline.sumanmovies.ui.screens.providers.StreamingProvidersScreen
 import com.sumanonline.sumanmovies.ui.screens.profile.ProfileScreen
 import com.sumanonline.sumanmovies.ui.screens.profile.ProfileViewModel
 import com.sumanonline.sumanmovies.ui.screens.seasons.SeasonsEpisodesScreen
@@ -96,14 +103,19 @@ fun AppNavigation(
         episode: Int? = null
     ) {
         val sMatch = Regex("""S(\d+)E(\d+)""", RegexOption.IGNORE_CASE).find(item.title)
+        val sWordMatch = Regex("""(?:Season|S)\s*(\d+)""", RegexOption.IGNORE_CASE).find(item.title)
+        val eWordMatch = Regex("""(?:Episode|Ep|E)\s*(\d+)""", RegexOption.IGNORE_CASE).find(item.title)
         val isSeries = item.mediaType != MediaType.MOVIE
-        val resolvedSeason = season ?: sMatch?.groupValues?.get(1)?.toIntOrNull() ?: if (isSeries) 1 else 0
-        val resolvedEpisode = episode ?: sMatch?.groupValues?.get(2)?.toIntOrNull() ?: if (isSeries) 1 else 0
+        val resolvedSeason = season ?: sMatch?.groupValues?.get(1)?.toIntOrNull() ?: sWordMatch?.groupValues?.get(1)?.toIntOrNull() ?: if (isSeries) 1 else 0
+        val resolvedEpisode = episode ?: sMatch?.groupValues?.get(2)?.toIntOrNull() ?: eWordMatch?.groupValues?.get(1)?.toIntOrNull() ?: if (isSeries) 1 else 0
 
         val cleanBase = item.title
             .replace(Regex("""(?i)\s*-\s*s\d+e\d+.*$"""), "")
             .replace(Regex("""(?i)\s*s\d+e\d+.*$"""), "")
             .replace(Regex("""(?i)\s*-\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*\((?:season|s)\s*\d+.*?\)$"""), "")
+            .replace(Regex("""(?i)\s*season\s*\d+.*$"""), "")
+            .replace(Regex("""(?i)\s*s\d+$"""), "")
             .trim()
             .ifBlank { item.title }
         val resolvedTitle = if (isSeries) "$cleanBase - S${resolvedSeason}E${resolvedEpisode}" else item.title
@@ -236,8 +248,23 @@ fun AppNavigation(
                         onNavigateToMovieBox = {
                             navController.navigate(Screen.MovieBox.route)
                         },
+                        onNavigateToKMDL = {
+                            navController.navigate(Screen.KMDL.route)
+                        },
+                        onNavigateToMoviesLeech = {
+                            navController.navigate(Screen.MoviesLeech.route)
+                        },
+                        onNavigateToMoviesMod = {
+                            navController.navigate(Screen.MoviesMod.route)
+                        },
                         onNavigateToLiveTv = {
                             navController.navigate(Screen.LiveTv.route)
+                        },
+                        onNavigateToAllProviders = {
+                            navController.navigate(Screen.StreamingProviders.route)
+                        },
+                        onNavigateToCategory = { key, title ->
+                            navController.navigate(Screen.CategoryMedia.createRoute(key, title))
                         },
                         onGenreClick = { genre ->
                             val key = "genre_${genre.lowercase().replace(" ", "_")}"
@@ -340,15 +367,11 @@ fun AppNavigation(
                         onMediaClick = { item ->
                             repository.cacheItem(item)
                             repository.setSelectedServer(item.id, StreamingServer.MOVIEBOX)
-                            if (item.mediaType != MediaType.MOVIE) {
-                                navController.navigate(Screen.Details.createRoute(item.id, item.mediaType.name))
-                            } else {
-                                launchPlayer(
-                                    context = context,
-                                    item = item,
-                                    server = StreamingServer.MOVIEBOX
-                                )
-                            }
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.MOVIEBOX
+                            )
                         }
                     )
                 }
@@ -366,6 +389,72 @@ fun AppNavigation(
                                 allStreams = listOf(channel.toStreamSource()),
                                 subtitles = emptyList()
                             )
+                        }
+                    )
+                }
+
+                composable(Screen.KMDL.route) {
+                    val kmdlViewModel = remember(repository) { KMDLViewModel(repository) }
+                    KMDLScreen(
+                        viewModel = kmdlViewModel,
+                        onBack = { navController.popBackStack() },
+                        onMediaClick = { item ->
+                            repository.cacheItem(item)
+                            repository.setSelectedServer(item.id, StreamingServer.KMDL)
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.KMDL
+                            )
+                        }
+                    )
+                }
+
+                composable(Screen.MoviesLeech.route) {
+                    val moviesLeechViewModel = remember(repository) { MoviesLeechViewModel(repository) }
+                    MoviesLeechScreen(
+                        viewModel = moviesLeechViewModel,
+                        onBack = { navController.popBackStack() },
+                        onMediaClick = { item ->
+                            repository.cacheItem(item)
+                            repository.setSelectedServer(item.id, StreamingServer.MOVIESLEECH)
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.MOVIESLEECH
+                            )
+                        }
+                    )
+                }
+
+                composable(Screen.MoviesMod.route) {
+                    val moviesModViewModel = remember(repository) { MoviesModViewModel(repository) }
+                    MoviesModScreen(
+                        viewModel = moviesModViewModel,
+                        onBack = { navController.popBackStack() },
+                        onMediaClick = { item ->
+                            repository.cacheItem(item)
+                            repository.setSelectedServer(item.id, StreamingServer.MOVIESMOD)
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.MOVIESMOD
+                            )
+                        }
+                    )
+                }
+
+                composable(Screen.StreamingProviders.route) {
+                    StreamingProvidersScreen(
+                        onBack = { navController.popBackStack() },
+                        onNavigateToPlay4U = { navController.navigate(Screen.Play4U.route) },
+                        onNavigateToMovieBox = { navController.navigate(Screen.MovieBox.route) },
+                        onNavigateToKMDL = { navController.navigate(Screen.KMDL.route) },
+                        onNavigateToMoviesLeech = { navController.navigate(Screen.MoviesLeech.route) },
+                        onNavigateToMoviesMod = { navController.navigate(Screen.MoviesMod.route) },
+                        onNavigateToLiveTv = { navController.navigate(Screen.LiveTv.route) },
+                        onNavigateToCategory = { key, title ->
+                            navController.navigate(Screen.CategoryMedia.createRoute(key, title))
                         }
                     )
                 }

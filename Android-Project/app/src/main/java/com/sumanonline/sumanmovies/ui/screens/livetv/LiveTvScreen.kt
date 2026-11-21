@@ -373,7 +373,7 @@ private fun LiveChannelCard(
                     .fillMaxWidth()
                     .height(84.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF0F172A)),
+                    .background(Color(0xFF16161D)),
                 contentAlignment = Alignment.Center
             ) {
                 if (!channel.logoUrl.isNullOrBlank()) {

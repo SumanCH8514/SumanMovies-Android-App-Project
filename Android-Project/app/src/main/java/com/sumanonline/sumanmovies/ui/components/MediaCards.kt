@@ -53,6 +53,7 @@ import coil.compose.AsyncImage
 import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
@@ -110,9 +111,11 @@ fun VerticalPosterCard(
     item: MediaItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    rank: Int? = null
+    rank: Int? = null,
+    accentColor: Color = LocalAppAccent.current.color,
+    showProviderBadge: Boolean = true
 ) {
-    val accent = LocalAppAccent.current.color
+    val accent = accentColor
     Column(
         modifier = modifier
             .width(115.dp)
@@ -122,8 +125,12 @@ fun VerticalPosterCard(
             modifier = Modifier
                 .width(115.dp)
                 .height(165.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(CardDark)
+                .border(
+                    BorderStroke(1.dp, BorderDark.copy(alpha = 0.5f)),
+                    RoundedCornerShape(12.dp)
+                )
         ) {
             if (!item.posterUrl.isNullOrBlank()) {
                 AsyncImage(
@@ -182,7 +189,7 @@ fun VerticalPosterCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
             text = item.title,
@@ -193,9 +200,18 @@ fun VerticalPosterCard(
             overflow = TextOverflow.Ellipsis
         )
 
+        Spacer(modifier = Modifier.height(2.dp))
+
         val meta = buildString {
             if (!item.year.isNullOrBlank()) append("${item.year} • ")
-            append(if (item.mediaType == MediaType.MOVIE) "movies" else "series")
+            append(
+                when (item.mediaType) {
+                    MediaType.MOVIE -> "Movie"
+                    MediaType.ANIME -> "Anime"
+                    MediaType.DRAMA -> "Drama"
+                    else -> "Series"
+                }
+            )
         }
 
         Text(
@@ -271,6 +287,10 @@ fun ContinueWatchingCard(
                 .height(128.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(CardDark)
+                .border(
+                    BorderStroke(1.dp, BorderDark),
+                    RoundedCornerShape(12.dp)
+                )
         ) {
             val displayImage = if (isSeries) {
                 item.stillUrl?.takeIf { it.isNotBlank() }
@@ -495,7 +515,7 @@ fun ContinueWatchingCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(7.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -555,8 +575,12 @@ fun LandscapeCard(
             modifier = Modifier
                 .width(220.dp)
                 .height(124.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(CardDark)
+                .border(
+                    BorderStroke(1.dp, BorderDark.copy(alpha = 0.5f)),
+                    RoundedCornerShape(12.dp)
+                )
         ) {
             val img = item.backdropUrl ?: item.posterUrl
             if (!img.isNullOrBlank()) {
@@ -569,7 +593,7 @@ fun LandscapeCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
             text = item.title,
@@ -580,9 +604,18 @@ fun LandscapeCard(
             overflow = TextOverflow.Ellipsis
         )
 
+        Spacer(modifier = Modifier.height(2.dp))
+
         val meta = buildString {
             if (!item.year.isNullOrBlank()) append("${item.year} • ")
-            append(if (item.mediaType == MediaType.MOVIE) "Movies" else "Series")
+            append(
+                when (item.mediaType) {
+                    MediaType.MOVIE -> "Movie"
+                    MediaType.ANIME -> "Anime"
+                    MediaType.DRAMA -> "Drama"
+                    else -> "Series"
+                }
+            )
         }
 
         Text(
@@ -605,9 +638,9 @@ fun GenreCard(
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF131926))
+            .background(CardElevated)
             .border(
-                BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+                BorderStroke(1.dp, BorderDark),
                 RoundedCornerShape(12.dp)
             )
             .clickable { onClick() }
@@ -629,7 +662,7 @@ fun GenreCard(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = Color(0xFF64748B),
+                tint = TextMuted,
                 modifier = Modifier.size(16.dp)
             )
         }

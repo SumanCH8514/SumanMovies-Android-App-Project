@@ -115,16 +115,49 @@ class SeasonsEpisodesViewModel(
         fetchDownloadQualities(_uiState.value.downloadModalServer, episode)
     }
 
+    private fun calculateAbsoluteEpisode(seasonNum: Int, epNum: Int): Int? {
+        if (seasonNum <= 1) return epNum.takeIf { it > 0 }
+        val seasons = _uiState.value.seasons
+        if (seasons.isEmpty()) return epNum.takeIf { it > 0 }
+
+        val currentEpisodes = _uiState.value.episodes
+        val firstEpInSeason = currentEpisodes.firstOrNull { it.seasonNumber == seasonNum }?.episodeNumber
+            ?: currentEpisodes.firstOrNull()?.episodeNumber
+
+        val currentSeason = seasons.firstOrNull { it.seasonNumber == seasonNum }
+        val currentSeasonCount = currentSeason?.episodeCount ?: 0
+
+        val prevCount = seasons
+            .filter { it.seasonNumber in 1 until seasonNum }
+            .sumOf { it.episodeCount }
+
+        val isAlreadyAbsolute = (firstEpInSeason != null && firstEpInSeason > 1) ||
+                (prevCount > 0 && epNum > prevCount) ||
+                (currentSeasonCount in 1..50 && epNum > currentSeasonCount) ||
+                (seasonNum > 1 && epNum > 50)
+
+        return if (isAlreadyAbsolute) {
+            epNum
+        } else if (prevCount > 0) {
+            prevCount + epNum
+        } else {
+            epNum
+        }
+    }
+
     fun fetchDownloadQualities(server: StreamingServer, episode: Episode) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isDownloadModalLoading = true)
+            val absEp = calculateAbsoluteEpisode(episode.seasonNumber, episode.episodeNumber)
             val resolved = repository.resolveServer(
                 server = server,
                 title = _uiState.value.mediaTitle,
                 season = episode.seasonNumber,
                 episode = episode.episodeNumber,
                 providerId = _uiState.value.mediaId,
-                releaseYear = _uiState.value.releaseYear
+                releaseYear = _uiState.value.releaseYear,
+                forceRefresh = false,
+                absoluteEpisode = absEp
             )
             val updated = _uiState.value.serverStates.toMutableMap()
             updated[server] = resolved

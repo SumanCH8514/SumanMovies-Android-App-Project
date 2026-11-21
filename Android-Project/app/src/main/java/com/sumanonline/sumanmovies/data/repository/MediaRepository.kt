@@ -9,6 +9,7 @@ import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaDetails
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.data.models.MoviesLeechGenre
 import com.sumanonline.sumanmovies.data.models.ServerState
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
@@ -17,8 +18,13 @@ import com.sumanonline.sumanmovies.data.models.TvChannel
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
+import com.sumanonline.sumanmovies.data.models.MediaSegment
+import com.sumanonline.sumanmovies.data.remote.kmdl.KMDLMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesleech.MoviesLeechMobileClient
+import com.sumanonline.sumanmovies.data.remote.moviesmod.MoviesModMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
+import com.sumanonline.sumanmovies.data.remote.theintrodb.TheIntroDbClient
 import com.sumanonline.sumanmovies.data.remote.tmdb.TmdbRepository
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
@@ -39,17 +45,23 @@ class MediaRepository(
     private val downloadManager: AppDownloadManager,
     private val serverSelectionManager: ServerSelectionManager,
     private val playbackResolver: PlaybackResolver,
-    private val searchHistoryManager: SearchHistoryManager? = null
+    private val searchHistoryManager: SearchHistoryManager? = null,
+    private val kmdlClient: KMDLMobileClient = KMDLMobileClient(),
+    private val moviesLeechClient: MoviesLeechMobileClient = MoviesLeechMobileClient(),
+    private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient(),
+    private val theIntroDbClient: TheIntroDbClient = TheIntroDbClient()
 ) {
     private val searchCache = LruCache<String, Pair<Long, List<MediaItem>>>(60)
     private val searchTtlMs = 5 * 60 * 1000L
     private val play4uSearchCache = LruCache<String, Pair<Long, List<MediaItem>>>(50)
     private val movieBoxSearchCache = LruCache<String, Pair<Long, List<MediaItem>>>(50)
+    private val tmdbArtworkCache = LruCache<String, Pair<String?, String?>>(1500)
 
     fun clearSearchCache() {
         synchronized(searchCache) { searchCache.evictAll() }
         synchronized(play4uSearchCache) { play4uSearchCache.evictAll() }
         synchronized(movieBoxSearchCache) { movieBoxSearchCache.evictAll() }
+        synchronized(tmdbArtworkCache) { tmdbArtworkCache.evictAll() }
     }
     fun getSearchHistory(): List<String> = searchHistoryManager?.getSearchHistory() ?: emptyList()
     fun addSearchQuery(query: String) { searchHistoryManager?.addSearchQuery(query) }
@@ -240,9 +252,10 @@ class MediaRepository(
         episode: Int = 1,
         providerId: String? = null,
         releaseYear: String? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        absoluteEpisode: Int? = null
     ): ServerState {
-        return playbackResolver.resolveServer(server, title, season, episode, providerId, releaseYear, forceRefresh)
+        return playbackResolver.resolveServer(server, title, season, episode, providerId, releaseYear, forceRefresh, absoluteEpisode)
     }
 
     suspend fun resolveLockerUrl(url: String): StreamSource? {
@@ -486,6 +499,86 @@ class MediaRepository(
         return results
     }
 
+    suspend fun getArtworkForTitle(
+        title: String,
+        year: String? = null,
+        mediaType: MediaType? = null
+    ): Pair<String?, String?> {
+        val cacheKey = "${title.trim().lowercase()}_${year?.take(4) ?: ""}"
+        val cached = synchronized(tmdbArtworkCache) { tmdbArtworkCache.get(cacheKey) }
+        if (cached != null) return cached
+
+        val fetched = tmdbRepo.fetchFastArtwork(title, year, mediaType)
+        if (!fetched.first.isNullOrBlank()) {
+            synchronized(tmdbArtworkCache) { tmdbArtworkCache.put(cacheKey, fetched) }
+        }
+        return fetched
+    }
+
+    suspend fun getKMDLCatalog(driveIndex: Int = 1, page: Int = 1): Pair<List<MediaItem>, Int> {
+        val res = kmdlClient.getCatalog(driveIndex, page)
+        val mapped = res.first.map { item ->
+            val cacheKey = "${item.title.trim().lowercase()}_${item.year?.take(4) ?: ""}"
+            val artwork = synchronized(tmdbArtworkCache) { tmdbArtworkCache.get(cacheKey) }
+            val cached = getCachedItem(item.id)
+            if (artwork != null && !artwork.first.isNullOrBlank()) {
+                item.copy(posterUrl = artwork.first, backdropUrl = artwork.second ?: item.backdropUrl)
+            } else if (cached != null && !cached.posterUrl.isNullOrBlank()) {
+                item.copy(posterUrl = cached.posterUrl, backdropUrl = cached.backdropUrl ?: item.backdropUrl)
+            } else {
+                item
+            }
+        }
+        mapped.forEach { cacheItem(it) }
+        return Pair(mapped, res.second)
+    }
+
+    suspend fun searchKMDL(query: String, driveIndex: Int? = null): List<MediaItem> {
+        val results = kmdlClient.search(query, driveIndex)
+        val mapped = results.map { item ->
+            val cacheKey = "${item.title.trim().lowercase()}_${item.year?.take(4) ?: ""}"
+            val artwork = synchronized(tmdbArtworkCache) { tmdbArtworkCache.get(cacheKey) }
+            val cached = getCachedItem(item.id)
+            if (artwork != null && !artwork.first.isNullOrBlank()) {
+                item.copy(posterUrl = artwork.first, backdropUrl = artwork.second ?: item.backdropUrl)
+            } else if (cached != null && !cached.posterUrl.isNullOrBlank()) {
+                item.copy(posterUrl = cached.posterUrl, backdropUrl = cached.backdropUrl ?: item.backdropUrl)
+            } else {
+                item
+            }
+        }
+        mapped.forEach { cacheItem(it) }
+        return mapped
+    }
+
+    suspend fun getMoviesLeechCatalog(categoryPath: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
+        val res = moviesLeechClient.getCatalog(categoryPath, page)
+        res.first.forEach { cacheItem(it) }
+        return res
+    }
+
+    suspend fun getMoviesLeechGenres(): List<MoviesLeechGenre> {
+        return moviesLeechClient.getGenres()
+    }
+
+    suspend fun searchMoviesLeech(query: String, page: Int = 1): List<MediaItem> {
+        val results = moviesLeechClient.search(query, page)
+        results.forEach { cacheItem(it) }
+        return results
+    }
+
+    suspend fun getMoviesModCatalog(categoryPath: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
+        val res = moviesModClient.getCatalog(categoryPath, page)
+        res.first.forEach { cacheItem(it) }
+        return res
+    }
+
+    suspend fun searchMoviesMod(query: String, page: Int = 1): List<MediaItem> {
+        val results = moviesModClient.search(query, page)
+        results.forEach { cacheItem(it) }
+        return results
+    }
+
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
         return tmdbRepo.getSeasonEpisodes(tvId, seasonNumber)
     }
@@ -499,10 +592,56 @@ class MediaRepository(
                 return match.episodes
             }
         }
-        val tmdbId = mediaId.toIntOrNull()
-        return if (tmdbId != null) {
-            getSeasonEpisodes(tmdbId, seasonNumber)
-        } else emptyList()
+
+        val cleanId = mediaId.removePrefix("play4u:")
+            .removePrefix("moviebox:")
+            .removePrefix("kmdl:")
+            .removePrefix("moviesmod:")
+            .removePrefix("moviesleech:")
+            .removePrefix("fourkhdhub:")
+            .removePrefix("hdhub4u:")
+            .trim()
+
+        val cachedItem = itemCache[mediaId] ?: itemCache[cleanId]
+        var resolvedTmdbId: Int? = mediaId.toIntOrNull()
+            ?: cleanId.toIntOrNull()
+            ?: cachedItem?.tmdbId
+
+        if (resolvedTmdbId == null && (cleanId.startsWith("tt") || mediaId.startsWith("tt"))) {
+            val imdb = if (cleanId.startsWith("tt")) cleanId else mediaId
+            resolvedTmdbId = try {
+                tmdbRepo.findTmdbIdByImdbId(imdb, MediaType.SERIES)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        if (resolvedTmdbId == null) {
+            val candidateTitle = cachedItem?.title ?: cleanId
+            val cleanTitle = candidateTitle
+                .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+                .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+                .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+                .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s*\(\d{4}\)"""), "")
+                .trim()
+            if (cleanTitle.isNotBlank()) {
+                val searchResults = try {
+                    tmdbRepo.search(cleanTitle)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                resolvedTmdbId = searchResults.firstOrNull { it.mediaType == MediaType.SERIES }?.tmdbId
+                    ?: searchResults.firstOrNull { it.mediaType == MediaType.SERIES }?.id?.toIntOrNull()
+                    ?: searchResults.firstOrNull()?.tmdbId
+            }
+        }
+
+        return if (resolvedTmdbId != null) {
+            getSeasonEpisodes(resolvedTmdbId, seasonNumber)
+        } else {
+            emptyList()
+        }
     }
 
     suspend fun getCategoryMedia(categoryKey: String, page: Int = 1): Pair<List<MediaItem>, Int> {
@@ -654,5 +793,79 @@ class MediaRepository(
         val allStreams = servers.values.flatMap { it.streams }
         val allSubs = servers.values.flatMap { it.subtitles }
         return Pair(allStreams, allSubs)
+    }
+
+    suspend fun getSkipSegments(
+        mediaId: String,
+        title: String,
+        type: MediaType,
+        year: String? = null,
+        seasonNumber: Int = 1,
+        episodeNumber: Int = 1
+    ): List<MediaSegment> {
+        val cleanId = mediaId.removePrefix("play4u:")
+            .removePrefix("moviebox:")
+            .removePrefix("kmdl:")
+            .removePrefix("moviesmod:")
+            .removePrefix("moviesleech:")
+            .removePrefix("fourkhdhub:")
+            .removePrefix("hdhub4u:")
+            .trim()
+
+        val cachedItem = itemCache[mediaId] ?: itemCache[cleanId]
+        var resolvedTmdbId: Int? = mediaId.toIntOrNull()
+            ?: cleanId.toIntOrNull()
+            ?: cachedItem?.tmdbId
+
+        var resolvedImdbId: String? = if (cleanId.startsWith("tt", ignoreCase = true)) {
+            cleanId
+        } else if (mediaId.startsWith("tt", ignoreCase = true)) {
+            mediaId
+        } else null
+
+        if (resolvedTmdbId == null && resolvedImdbId == null) {
+            val cleanTitle = title
+                .replace(Regex("""(?i)\s*[-–]?\s*s\d+.*$"""), "")
+                .replace(Regex("""(?i)\s*[-–]?\s*season\s*\d+.*$"""), "")
+                .replace(Regex("""(?i)\s*[-–]?\s*ep\s*\d+.*$"""), "")
+                .replace(Regex("""\s*\((?:Season|S)\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s*\(\d{4}\)"""), "")
+                .trim()
+
+            if (cleanTitle.isNotBlank()) {
+                val searchResults = try {
+                    tmdbRepo.search(cleanTitle)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val matched = if (!year.isNullOrBlank()) {
+                    searchResults.firstOrNull { it.year == year && it.mediaType == type }
+                        ?: searchResults.firstOrNull { it.year == year }
+                        ?: searchResults.firstOrNull { it.mediaType == type }
+                        ?: searchResults.firstOrNull()
+                } else {
+                    searchResults.firstOrNull { it.mediaType == type }
+                        ?: searchResults.firstOrNull()
+                }
+                resolvedTmdbId = matched?.tmdbId ?: matched?.id?.toIntOrNull()
+            }
+        }
+
+        if (resolvedTmdbId == null && resolvedImdbId != null) {
+            resolvedTmdbId = try {
+                tmdbRepo.findTmdbIdByImdbId(resolvedImdbId, type)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        val isSeries = type == MediaType.SERIES || type == MediaType.ANIME || type == MediaType.DRAMA
+        return theIntroDbClient.getSegments(
+            tmdbId = resolvedTmdbId,
+            imdbId = resolvedImdbId,
+            season = if (isSeries) seasonNumber else null,
+            episode = if (isSeries) episodeNumber else null,
+            isSeries = isSeries
+        )
     }
 }

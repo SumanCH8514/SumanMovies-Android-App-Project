@@ -63,6 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sumanonline.sumanmovies.ui.theme.BgDark
+import com.sumanonline.sumanmovies.ui.theme.BorderDark
+import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
@@ -137,7 +139,7 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(CardElevated)
-                    .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
+                    .border(1.dp, BorderDark, RoundedCornerShape(16.dp))
                     .padding(16.dp)
             ) {
                 Row(
@@ -195,7 +197,7 @@ fun ProfileScreen(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.06f))
+                            .background(CardDark)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Edit,
@@ -257,7 +259,7 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(CardElevated)
-                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                    .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
             ) {
                 ProfileListItem(
                     icon = Icons.Default.Palette,
@@ -270,7 +272,7 @@ fun ProfileScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(BgDark)
+                        .background(BorderDark)
                 )
 
                 ProfileListItem(
@@ -297,7 +299,7 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(CardElevated)
-                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                    .border(1.dp, BorderDark, RoundedCornerShape(14.dp))
             ) {
                 ProfileListItem(
                     icon = Icons.Default.Refresh,
@@ -316,7 +318,7 @@ fun ProfileScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(BgDark)
+                        .background(BorderDark)
                 )
 
                 ProfileListItem(
@@ -407,12 +409,15 @@ fun ProfileScreen(
             },
             dismissButton = {
                 OutlinedButton(
-                    onClick = { viewModel.dismissUpdateDialog() }
+                    onClick = { viewModel.dismissUpdateDialog() },
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderDark)
                 ) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -442,7 +447,9 @@ fun ProfileScreen(
                     Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 
@@ -476,7 +483,7 @@ fun ProfileScreen(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
                             focusedIndicatorColor = accent,
-                            unfocusedIndicatorColor = Color.White.copy(alpha = 0.2f)
+                            unfocusedIndicatorColor = BorderDark
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -497,7 +504,9 @@ fun ProfileScreen(
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF1B1B22)
+            containerColor = CardElevated,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary
         )
     }
 }
@@ -515,7 +524,7 @@ private fun ProfileStatCard(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(CardElevated)
-            .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+            .border(1.dp, BorderDark, RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(vertical = 12.dp, horizontal = 10.dp),
         contentAlignment = Alignment.Center

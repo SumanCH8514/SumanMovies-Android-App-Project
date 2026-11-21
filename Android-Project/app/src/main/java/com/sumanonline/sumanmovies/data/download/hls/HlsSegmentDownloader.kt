@@ -208,7 +208,7 @@ class HlsSegmentDownloader(
         var attempts = 0
         var lastEx: Exception? = null
 
-        while (attempts < 3) {
+        while (attempts < 4) {
             attempts++
             try {
                 val resp = httpClient.newCall(reqBuilder.build()).execute()
@@ -219,12 +219,18 @@ class HlsSegmentDownloader(
                         return bytes
                     }
                 } else {
+                    val code = resp.code
                     resp.close()
+                    if (code == 429) {
+                        try {
+                            Thread.sleep(1500L * attempts)
+                        } catch (_: Exception) {}
+                    }
                 }
             } catch (e: Exception) {
                 lastEx = e
                 try {
-                    Thread.sleep(400L * attempts)
+                    Thread.sleep(500L * attempts)
                 } catch (_: Exception) {}
             }
         }

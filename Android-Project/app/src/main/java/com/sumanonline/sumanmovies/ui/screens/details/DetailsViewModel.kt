@@ -131,6 +131,36 @@ class DetailsViewModel(
         }
     }
 
+    private fun calculateAbsoluteEpisode(seasonNum: Int, epNum: Int): Int? {
+        if (seasonNum <= 1) return epNum.takeIf { it > 0 }
+        val seasons = _uiState.value.details?.seasons ?: _uiState.value.seasons
+        if (seasons.isEmpty()) return epNum.takeIf { it > 0 }
+
+        val currentEpisodes = _uiState.value.episodes
+        val firstEpInSeason = currentEpisodes.firstOrNull { it.seasonNumber == seasonNum }?.episodeNumber
+            ?: currentEpisodes.firstOrNull()?.episodeNumber
+
+        val currentSeason = seasons.firstOrNull { it.seasonNumber == seasonNum }
+        val currentSeasonCount = currentSeason?.episodeCount ?: 0
+
+        val prevCount = seasons
+            .filter { it.seasonNumber in 1 until seasonNum }
+            .sumOf { it.episodeCount }
+
+        val isAlreadyAbsolute = (firstEpInSeason != null && firstEpInSeason > 1) ||
+                (prevCount > 0 && epNum > prevCount) ||
+                (currentSeasonCount in 1..50 && epNum > currentSeasonCount) ||
+                (seasonNum > 1 && epNum > 50)
+
+        return if (isAlreadyAbsolute) {
+            epNum
+        } else if (prevCount > 0) {
+            prevCount + epNum
+        } else {
+            epNum
+        }
+    }
+
     fun playDirect(
         context: Context,
         server: StreamingServer = _uiState.value.selectedServer,
@@ -142,13 +172,14 @@ class DetailsViewModel(
             val currentState = _uiState.value.serverStates[server]
             val isMovie = d.mediaType == MediaType.MOVIE
             val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
-            val actualEpisode = if (isMovie) 0 else 1
+            val actualEpisode = if (isMovie) 0 else _uiState.value.episodes.firstOrNull()?.episodeNumber ?: 1
             val yr = d.year ?: d.releaseDate?.take(4)
+            val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
 
             val resolvedState = if (currentState != null && currentState.status == ServerAvailability.AVAILABLE && currentState.streams.isNotEmpty()) {
                 currentState
             } else {
-                repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
+                repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr, false, absEp)
             }
 
             _uiState.value = _uiState.value.copy(isDirectPlaying = false)
@@ -263,10 +294,11 @@ class DetailsViewModel(
             _uiState.value = _uiState.value.copy(isQualityModalLoading = true)
             val isMovie = d.mediaType == MediaType.MOVIE
             val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
-            val actualEpisode = if (isMovie) 0 else 1
+            val actualEpisode = if (isMovie) 0 else _uiState.value.episodes.firstOrNull()?.episodeNumber ?: 1
 
             val yr = d.year ?: d.releaseDate?.take(4)
-            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
+            val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
+            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr, false, absEp)
             val updated = _uiState.value.serverStates.toMutableMap()
             updated[server] = resolved
 
@@ -466,10 +498,11 @@ class DetailsViewModel(
 
             val isMovie = d.mediaType == MediaType.MOVIE
             val actualSeason = if (isMovie) 0 else _uiState.value.selectedSeason
-            val actualEpisode = if (isMovie) 0 else 1
+            val actualEpisode = if (isMovie) 0 else _uiState.value.episodes.firstOrNull()?.episodeNumber ?: 1
 
             val yr = d.year ?: d.releaseDate?.take(4)
-            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr)
+            val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
+            val resolved = repository.resolveServer(server, d.title, actualSeason, actualEpisode, mediaId, yr, false, absEp)
             val updated = _uiState.value.serverStates.toMutableMap()
             updated[server] = resolved
             _uiState.value = _uiState.value.copy(serverStates = updated)
@@ -527,10 +560,6 @@ class DetailsViewModel(
     fun selectSeason(seasonNumber: Int) {
         _uiState.value = _uiState.value.copy(selectedSeason = seasonNumber)
         loadEpisodes(seasonNumber)
-        val d = _uiState.value.details
-        if (d != null) {
-            checkServersAvailability(d.title, seasonNumber, 1)
-        }
     }
 
     fun retry() {
@@ -585,6 +614,11 @@ class DetailsViewModel(
             }
 
             _uiState.value = _uiState.value.copy(episodes = eps)
+            val d = _uiState.value.details
+            if (d != null) {
+                val firstEp = eps.firstOrNull()?.episodeNumber ?: 1
+                checkServersAvailability(d.title, seasonNumber, firstEp)
+            }
         }
     }
 
@@ -632,7 +666,8 @@ class DetailsViewModel(
                     return@forEach
                 }
                 launch(Dispatchers.IO) {
-                    val resolved = repository.resolveServer(srv, title, actualSeason, actualEpisode, mediaId, yr)
+                    val absEp = calculateAbsoluteEpisode(actualSeason, actualEpisode)
+                    val resolved = repository.resolveServer(srv, title, actualSeason, actualEpisode, mediaId, yr, false, absEp)
                     val updated = _uiState.value.serverStates.toMutableMap()
                     updated[srv] = resolved
                     val isCurrent = (_uiState.value.selectedServer == srv)
@@ -654,12 +689,14 @@ class DetailsViewModel(
 
     private fun pickBestStream(streams: List<StreamSource>): StreamSource? {
         val supports4k = com.sumanonline.sumanmovies.util.DeviceCapabilities.supports4KHevc()
+        val fullStreams = streams.filter { it.sourceQualityTag != "Preview" }
+        val candidates = fullStreams.ifEmpty { streams }
         return if (!supports4k) {
-            streams.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
-                ?: streams.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
-                ?: streams.firstOrNull()
+            candidates.firstOrNull { it.quality.contains("1080") || it.category == "1080p" }
+                ?: candidates.firstOrNull { !it.quality.contains("2160") && !it.quality.contains("4k", ignoreCase = true) }
+                ?: candidates.firstOrNull()
         } else {
-            streams.firstOrNull()
+            candidates.firstOrNull()
         }
     }
 
@@ -721,13 +758,16 @@ class DetailsViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isStreamsLoading = true)
             val yr = d.year ?: d.releaseDate?.take(4)
+            val absEp = calculateAbsoluteEpisode(episode.seasonNumber, episode.episodeNumber)
             val resolvedState = repository.resolveServer(
                 currentServer,
                 d.title,
                 episode.seasonNumber,
                 episode.episodeNumber,
                 d.id,
-                yr
+                yr,
+                false,
+                absEp
             )
             _uiState.value = _uiState.value.copy(isStreamsLoading = false)
             val stream = pickBestStream(resolvedState.streams)

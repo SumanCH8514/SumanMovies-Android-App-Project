@@ -10,7 +10,10 @@ enum class StreamingServer(
     HDHUB4U("hdhub4u", "HDHub4u", "1080p / 4K"),
     FOURKHDHUB("fourkhdhub", "4KHDHub", "4K / 1080p"),
     DRAMACHI("dramachi", "Dramachi", "Dramas & Series"),
-    REANIME("reanime", "ReAnime", "Anime HD");
+    REANIME("reanime", "ReAnime", "Anime HD"),
+    KMDL("kmdl", "KMDL", "Cloud Drive"),
+    MOVIESLEECH("moviesleech", "MoviesLeech", "1080p / 4K"),
+    MOVIESMOD("moviesmod", "MoviesMod", "Dual Audio");
 
     companion object {
         fun fromId(id: String?): StreamingServer {
@@ -60,4 +63,9 @@ data class ServerState(
     val subtitles: List<SubtitleTrack> = emptyList(),
     val bestQuality: String? = null,
     val errorMessage: String? = null
+)
+
+data class MoviesLeechGenre(
+    val name: String,
+    val path: String
 )

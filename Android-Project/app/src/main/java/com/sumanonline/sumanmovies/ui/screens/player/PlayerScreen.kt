@@ -7,8 +7,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import com.sumanonline.sumanmovies.data.models.MediaSegment
+import com.sumanonline.sumanmovies.data.models.MediaSegmentType
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -171,7 +176,7 @@ fun PlayerScreenClassic(
             )
         }
 
-        if (playbackState.isBuffering) {
+        if (playbackState.isBuffering && !playbackState.isPlaying) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -441,6 +446,33 @@ fun PlayerScreenClassic(
             }
         }
 
+        val currentSeg = uiState.currentSkipSegment
+        AnimatedVisibility(
+            visible = currentSeg != null &&
+                !uiState.isStreamsDrawerOpen &&
+                !uiState.isEpisodesDrawerOpen &&
+                !uiState.isAudioTracksModalOpen &&
+                !uiState.isSubtitlesModalOpen,
+            enter = fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 2 },
+            exit = fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(
+                    end = 24.dp,
+                    bottom = if (uiState.showControls) 88.dp else 28.dp
+                )
+        ) {
+            if (currentSeg != null) {
+                PlayerClassicSkipButton(
+                    segment = currentSeg,
+                    hasNextEpisode = uiState.hasNextEpisode,
+                    accent = accent,
+                    onSkip = { viewModel.skipCurrentSegment() },
+                    onDismiss = { viewModel.dismissCurrentSkipSegment() }
+                )
+            }
+        }
+
         if (uiState.isStreamsDrawerOpen) {
             Box(
                 modifier = Modifier
@@ -453,7 +485,7 @@ fun PlayerScreenClassic(
                     modifier = Modifier
                         .widthIn(min = 320.dp, max = 370.dp)
                         .fillMaxHeight()
-                        .background(Color(0xFF141720))
+                        .background(Color(0xFF121217))
                         .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -812,7 +844,7 @@ fun PlayerScreenClassic(
                     modifier = Modifier
                         .widthIn(min = 320.dp, max = 360.dp)
                         .fillMaxHeight()
-                        .background(Color(0xFF141720))
+                        .background(Color(0xFF121217))
                         .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -1038,7 +1070,7 @@ fun PlayerScreenClassic(
                     modifier = Modifier
                         .widthIn(min = 320.dp, max = 360.dp)
                         .fillMaxHeight()
-                        .background(Color(0xFF141720))
+                        .background(Color(0xFF121217))
                         .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -1378,6 +1410,72 @@ private fun formatTime(ms: Long): String {
         String.format(java.util.Locale.US, "%d:%02d:%02d", hr, min, sec)
     } else {
         String.format(java.util.Locale.US, "%02d:%02d", min, sec)
+    }
+}
+
+@Composable
+private fun PlayerClassicSkipButton(
+    segment: MediaSegment,
+    hasNextEpisode: Boolean,
+    accent: Color,
+    onSkip: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val label = when (segment.type) {
+        MediaSegmentType.INTRO -> "Skip Intro"
+        MediaSegmentType.RECAP -> "Skip Recap"
+        MediaSegmentType.CREDITS -> if (hasNextEpisode && segment.endMs == null) "Next Episode" else "Skip Credits"
+        MediaSegmentType.PREVIEW -> "Skip Preview"
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xE6141824))
+            .border(
+                BorderStroke(1.dp, accent.copy(alpha = 0.75f)),
+                RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onSkip)
+            .padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.FastForward,
+                contentDescription = label,
+                tint = accent,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.3.sp
+            )
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
     }
 }
 

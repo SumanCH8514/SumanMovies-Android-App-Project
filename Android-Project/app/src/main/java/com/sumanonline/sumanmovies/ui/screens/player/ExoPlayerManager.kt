@@ -15,6 +15,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
@@ -26,6 +27,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.mkv.MatroskaExtractor
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
@@ -89,6 +91,8 @@ class ExoPlayerManager(private val context: Context) {
     private val _isSubtitlesEnabled = MutableStateFlow(true)
     val isSubtitlesEnabled: StateFlow<Boolean> = _isSubtitlesEnabled.asStateFlow()
 
+    private var activeStream: StreamSource? = null
+
     fun getPlayer(): ExoPlayer {
         if (exoPlayer == null) {
             val renderersFactory = object : DefaultRenderersFactory(context) {
@@ -150,8 +154,20 @@ class ExoPlayerManager(private val context: Context) {
                         .setViewportSizeToPhysicalDisplaySize(this@ExoPlayerManager.context, true)
                 )
             }
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    15000,
+                    30000,
+                    500,
+                    1000
+                )
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .setBackBuffer(10000, true)
+                .build()
+
             exoPlayer = ExoPlayer.Builder(context, renderersFactory)
                 .setTrackSelector(trackSelector)
+                .setLoadControl(loadControl)
                 .setSeekForwardIncrementMs(10000)
                 .setSeekBackIncrementMs(10000)
                 .build().apply {
@@ -288,11 +304,14 @@ class ExoPlayerManager(private val context: Context) {
                     val isSupported = group.isTrackSupported(i)
                     val id = "audio_${groupIndex}_${i}_${format.id ?: ""}_${format.language ?: ""}"
                     val displayName = formatAudioTrackName(format, result.size, isSupported)
+                    val resolvedLang = resolveTrackLanguage(format, result.size, isAudio = true)
+                    val resolvedLangCode = resolveAudioLanguageCode(format.language, format.label, resolvedLang)
+                    val cleanLabel = if (isJunkOrPromotionalLabel(format.label)) "" else (format.label ?: "")
                     result.add(
                         PlayerAudioTrack(
                             id = id,
-                            language = format.language,
-                            label = format.label ?: "",
+                            language = resolvedLangCode ?: format.language,
+                            label = cleanLabel,
                             displayName = displayName,
                             channelCount = format.channelCount,
                             isSelected = isSelected,
@@ -322,11 +341,14 @@ class ExoPlayerManager(private val context: Context) {
                     val isForced = (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0
                     val isHearingImpaired = (format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0 ||
                             (format.roleFlags and C.ROLE_FLAG_CAPTION) != 0
+                    val resolvedLang = resolveTrackLanguage(format, result.size, isAudio = false)
+                    val resolvedLangCode = resolveAudioLanguageCode(format.language, format.label, resolvedLang)
+                    val cleanLabel = if (isJunkOrPromotionalLabel(format.label)) "" else (format.label ?: "")
                     result.add(
                         PlayerSubtitleTrack(
                             id = id,
-                            language = format.language,
-                            label = format.label ?: "",
+                            language = resolvedLangCode ?: format.language,
+                            label = cleanLabel,
                             displayName = displayName,
                             isSelected = isSelected,
                             isForced = isForced,
@@ -369,20 +391,134 @@ class ExoPlayerManager(private val context: Context) {
         }
     }
 
-    private fun formatSubtitleTrackName(format: Format, index: Int): String {
+    companion object {
+        private val LANGUAGE_MAP = mapOf(
+            "hin" to "Hindi", "hi" to "Hindi", "hindi" to "Hindi",
+            "kor" to "Korean", "ko" to "Korean", "korean" to "Korean",
+            "eng" to "English", "en" to "English", "english" to "English",
+            "tam" to "Tamil", "ta" to "Tamil", "tamil" to "Tamil",
+            "tel" to "Telugu", "te" to "Telugu", "telugu" to "Telugu",
+            "mal" to "Malayalam", "ml" to "Malayalam", "malayalam" to "Malayalam",
+            "kan" to "Kannada", "kn" to "Kannada", "kannada" to "Kannada",
+            "ben" to "Bengali", "bn" to "Bengali", "bengali" to "Bengali",
+            "mar" to "Marathi", "mr" to "Marathi", "marathi" to "Marathi",
+            "pan" to "Punjabi", "pa" to "Punjabi", "punjabi" to "Punjabi",
+            "guj" to "Gujarati", "gu" to "Gujarati", "gujarati" to "Gujarati",
+            "urd" to "Urdu", "ur" to "Urdu", "urdu" to "Urdu",
+            "spa" to "Spanish", "es" to "Spanish", "spanish" to "Spanish",
+            "fra" to "French", "fre" to "French", "fr" to "French", "french" to "French",
+            "ger" to "German", "deu" to "German", "de" to "German", "german" to "German",
+            "jpn" to "Japanese", "ja" to "Japanese", "japanese" to "Japanese",
+            "zho" to "Chinese", "chi" to "Chinese", "zh" to "Chinese", "chinese" to "Chinese",
+            "ara" to "Arabic", "ar" to "Arabic", "arabic" to "Arabic",
+            "rus" to "Russian", "ru" to "Russian", "russian" to "Russian",
+            "ita" to "Italian", "it" to "Italian", "italian" to "Italian",
+            "por" to "Portuguese", "pt" to "Portuguese", "portuguese" to "Portuguese",
+            "tur" to "Turkish", "tr" to "Turkish", "turkish" to "Turkish",
+            "tha" to "Thai", "th" to "Thai", "thai" to "Thai",
+            "vie" to "Vietnamese", "vi" to "Vietnamese", "vietnamese" to "Vietnamese",
+            "ind" to "Indonesian", "id" to "Indonesian", "indonesian" to "Indonesian",
+            "pol" to "Polish", "pl" to "Polish", "polish" to "Polish",
+            "ukr" to "Ukrainian", "uk" to "Ukrainian", "ukrainian" to "Ukrainian",
+            "dut" to "Dutch", "nld" to "Dutch", "nl" to "Dutch", "dutch" to "Dutch",
+            "swe" to "Swedish", "sv" to "Swedish", "swedish" to "Swedish",
+            "nor" to "Norwegian", "no" to "Norwegian", "norwegian" to "Norwegian",
+            "dan" to "Danish", "da" to "Danish", "danish" to "Danish",
+            "fin" to "Finnish", "fi" to "Finnish", "finnish" to "Finnish",
+            "fil" to "Filipino", "tl" to "Filipino", "tagalog" to "Tagalog",
+            "nep" to "Nepali", "ne" to "Nepali", "nepali" to "Nepali",
+            "sin" to "Sinhala", "si" to "Sinhala", "sinhala" to "Sinhala"
+        )
+
+        private val JUNK_KEYWORDS = listOf(
+            "moviesmod", "vegamovies", "hdhub4u", "kmdl", "katmovie", "bollyflix",
+            "filmyzilla", "worldfree4u", "1xbet", "telegram", "t.me", "join", "download",
+            "channel", "visit", "www.", "official", "psa", "qxr", "yify", "yts", "galaxyrg",
+            "rarbg", "pahe", "mkvcage", "torrent", ".com", ".plus", ".org", ".net", ".vip",
+            ".in", ".link", ".cc", ".site", ".xyz", ".me", ".top", ".info", ".biz", ".co"
+        )
+    }
+
+    private fun isJunkOrPromotionalLabel(label: String?): Boolean {
+        if (label.isNullOrBlank()) return true
+        val clean = label.trim().lowercase()
+        if (JUNK_KEYWORDS.any { clean.contains(it) }) return true
+        if (clean.matches(Regex(".*\\.[a-z]{2,6}(\\/.*)?$"))) return true
+        return false
+    }
+
+    private fun extractLanguageFromText(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        val lower = text.lowercase()
+        for ((code, name) in LANGUAGE_MAP) {
+            if (name.length > 3 && lower.contains(name.lowercase())) {
+                return name
+            }
+            if (code.length >= 2 && lower.matches(Regex(".*\\b${Regex.escape(code)}\\b.*"))) {
+                return name
+            }
+        }
+        return null
+    }
+
+    private fun resolveTrackLanguage(format: Format, index: Int, isAudio: Boolean): String {
         val langCode = format.language?.trim()?.lowercase()
-        val localeLanguage = if (!langCode.isNullOrBlank() && langCode != "und") {
-            try {
+        val mappedLang = if (!langCode.isNullOrBlank() && langCode != "und") {
+            LANGUAGE_MAP[langCode] ?: try {
                 val loc = java.util.Locale.forLanguageTag(langCode)
                 val name = loc.getDisplayLanguage(java.util.Locale.ENGLISH)
-                if (name.isNotBlank()) name else java.util.Locale(langCode).getDisplayLanguage(java.util.Locale.ENGLISH)
+                if (name.isNotBlank() && !name.equals(langCode, ignoreCase = true)) {
+                    name
+                } else {
+                    java.util.Locale(langCode).getDisplayLanguage(java.util.Locale.ENGLISH)
+                }
             } catch (_: Exception) {
-                langCode.uppercase()
+                null
             }
         } else null
 
-        val rawLabel = format.label?.takeIf { it.isNotBlank() }
-        val isCodeOnly = rawLabel != null && rawLabel.length <= 3 && localeLanguage != null
+        if (!mappedLang.isNullOrBlank() && mappedLang != "und" && !mappedLang.equals("undetermined", ignoreCase = true)) {
+            return mappedLang
+        }
+
+        val rawLabel = format.label?.trim()
+        val langFromLabel = extractLanguageFromText(rawLabel)
+        if (langFromLabel != null) {
+            return langFromLabel
+        }
+
+        if (isAudio) {
+            val streamLangs = activeStream?.audioLangs
+                ?.split(",", "/", "&", "+", "|")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+            if (streamLangs != null && index < streamLangs.size) {
+                val candidate = streamLangs[index]
+                val normalizedFallback = LANGUAGE_MAP[candidate.lowercase()] ?: extractLanguageFromText(candidate) ?: candidate
+                if (!isJunkOrPromotionalLabel(normalizedFallback)) {
+                    return normalizedFallback
+                }
+            }
+
+            val titleLang = extractLanguageFromText(activeStream?.title)
+            if (titleLang != null && index == 0) {
+                return titleLang
+            }
+        }
+
+        if (!rawLabel.isNullOrBlank() && !isJunkOrPromotionalLabel(rawLabel) && rawLabel.length in 2..30) {
+            return rawLabel
+        }
+
+        if (!isAudio && index == 0) {
+            return "English"
+        }
+
+        return if (isAudio) "Audio Track ${index + 1}" else "Subtitle ${index + 1}"
+    }
+
+    private fun formatSubtitleTrackName(format: Format, index: Int): String {
+        val primaryName = resolveTrackLanguage(format, index, isAudio = false)
         val isForced = (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0
         val isHearingImpaired = (format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0 ||
                 (format.roleFlags and C.ROLE_FLAG_CAPTION) != 0
@@ -394,7 +530,6 @@ class ExoPlayerManager(private val context: Context) {
             else -> ""
         }
 
-        val primaryName = if (isCodeOnly) localeLanguage else (rawLabel ?: localeLanguage ?: "Subtitle ${index + 1}")
         return if (extra.isNotBlank() && !primaryName.contains(extra, ignoreCase = true)) {
             "$primaryName ($extra)"
         } else {
@@ -403,18 +538,7 @@ class ExoPlayerManager(private val context: Context) {
     }
 
     private fun formatAudioTrackName(format: Format, index: Int, isSupported: Boolean = true): String {
-        val langCode = format.language?.trim()?.lowercase()
-        val localeLanguage = if (!langCode.isNullOrBlank() && langCode != "und") {
-            try {
-                val loc = java.util.Locale.forLanguageTag(langCode)
-                val name = loc.getDisplayLanguage(java.util.Locale.ENGLISH)
-                if (name.isNotBlank()) name else java.util.Locale(langCode).getDisplayLanguage(java.util.Locale.ENGLISH)
-            } catch (_: Exception) {
-                langCode.uppercase()
-            }
-        } else null
-
-        val rawLabel = format.label?.takeIf { it.isNotBlank() }
+        val primaryName = resolveTrackLanguage(format, index, isAudio = true)
         val channelsStr = when (format.channelCount) {
             1 -> "Mono"
             2 -> "Stereo"
@@ -436,7 +560,6 @@ class ExoPlayerManager(private val context: Context) {
             else -> ""
         }
 
-        val primaryName = rawLabel ?: localeLanguage ?: "Audio Track ${index + 1}"
         val details = buildList {
             if (codecStr.isNotBlank() && !primaryName.contains(codecStr, ignoreCase = true)) add(codecStr)
             if (channelsStr.isNotBlank() && !primaryName.contains(channelsStr, ignoreCase = true)) add(channelsStr)
@@ -474,7 +597,9 @@ class ExoPlayerManager(private val context: Context) {
                 else -> lang
             }
         }
-        val combined = "$label $displayName".lowercase()
+        val cleanLabel = if (isJunkOrPromotionalLabel(label)) "" else (label ?: "")
+        val cleanDisplayName = if (isJunkOrPromotionalLabel(displayName)) "" else displayName
+        val combined = "$cleanLabel $cleanDisplayName".lowercase()
         return when {
             combined.contains("hindi") -> "hi"
             combined.contains("english") -> "en"
@@ -645,30 +770,36 @@ class ExoPlayerManager(private val context: Context) {
         subtitles: List<SubtitleTrack> = emptyList(),
         startPositionMs: Long = 0L
     ) {
+        activeStream = stream
         hasAttemptedAudioFallback = false
         val player = getPlayer()
         _audioTracks.value = emptyList()
 
         _playbackState.value = _playbackState.value.copy(
             errorMessage = null,
-            isBuffering = true
+            isBuffering = true,
+            currentPositionMs = startPositionMs.coerceAtLeast(0L),
+            durationMs = 0L,
+            bufferedPositionMs = 0L
         )
 
         if (subtitles.isNotEmpty()) {
             _subtitleTracks.value = subtitles.mapIndexed { idx, sub ->
                 val langCode = sub.language.trim().lowercase()
-                val localeName = try {
+                val mappedName = LANGUAGE_MAP[langCode] ?: try {
                     val loc = java.util.Locale.forLanguageTag(langCode)
                     val disp = loc.getDisplayLanguage(java.util.Locale.ENGLISH)
-                    if (disp.isNotBlank()) disp else java.util.Locale(langCode).getDisplayLanguage(java.util.Locale.ENGLISH)
+                    if (disp.isNotBlank() && !disp.equals(langCode, ignoreCase = true)) disp else java.util.Locale(langCode).getDisplayLanguage(java.util.Locale.ENGLISH)
                 } catch (_: Exception) {
-                    sub.label
+                    null
                 }
-                val dispName = if (localeName.isNotBlank()) localeName else sub.label.ifBlank { "Subtitle ${idx + 1}" }
+                val labelClean = if (isJunkOrPromotionalLabel(sub.label)) "" else sub.label
+                val labelLang = extractLanguageFromText(sub.label)
+                val dispName = mappedName ?: labelLang ?: labelClean.ifBlank { "Subtitle ${idx + 1}" }
                 PlayerSubtitleTrack(
                     id = sub.id.ifBlank { "server_sub_$idx" },
                     language = sub.language,
-                    label = sub.label,
+                    label = labelClean,
                     displayName = dispName,
                     isSelected = idx == 0,
                     isForced = false,
@@ -761,10 +892,8 @@ class ExoPlayerManager(private val context: Context) {
         }
 
         val mediaSource = createMediaSource(stream, subtitles)
-        player.setMediaSource(mediaSource)
-        if (startPositionMs > 0L) {
-            player.seekTo(startPositionMs)
-        }
+        player.setMediaSource(mediaSource, true)
+        player.seekTo(startPositionMs.coerceAtLeast(0L))
         player.prepare()
         player.playWhenReady = true
     }
@@ -790,6 +919,15 @@ class ExoPlayerManager(private val context: Context) {
         if (!headers.containsKey("User-Agent")) {
             headers["User-Agent"] = defaultUa
         }
+        if (!headers.containsKey("Accept")) {
+            headers["Accept"] = "*/*"
+        }
+        if (!headers.containsKey("Accept-Encoding")) {
+            headers["Accept-Encoding"] = "identity"
+        }
+        if (!headers.containsKey("Connection")) {
+            headers["Connection"] = "keep-alive"
+        }
 
         val uriHost = try {
             android.net.Uri.parse(stream.url).host?.lowercase() ?: ""
@@ -801,9 +939,16 @@ class ExoPlayerManager(private val context: Context) {
                 uriHost.contains("r2.cloudflarestorage") ||
                 uriHost.contains("r2.dev") ||
                 uriHost.contains("workers.dev") ||
-                uriHost.contains("drive.google.com")
+                uriHost.contains("drive.google.com") ||
+                uriHost.contains("video-gen.xyz") ||
+                uriHost.contains("driveseed.org") ||
+                uriHost.contains("fastdl") ||
+                uriHost.contains("10gbps") ||
+                uriHost.contains("stream") ||
+                uriHost.contains("workers") ||
+                stream.provider == "moviesleech"
 
-        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub") {
+        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub" || stream.provider == "moviesleech") {
             val referer = headers["Referer"]
             if (referer != null) {
                 val refererHost = try {
@@ -835,6 +980,7 @@ class ExoPlayerManager(private val context: Context) {
 
         val extractorsFactory = DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
+            .setMatroskaExtractorFlags(MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES)
 
         val mimeType = when {
             stream.format.equals("DASH", ignoreCase = true) || stream.url.contains(".mpd") -> MimeTypes.APPLICATION_MPD
@@ -938,6 +1084,20 @@ class ExoPlayerManager(private val context: Context) {
             player.volume = 1f
             false
         }
+    }
+
+    fun resetPlayback() {
+        activeStream = null
+        exoPlayer?.pause()
+        exoPlayer?.seekTo(0L)
+        exoPlayer?.clearMediaItems()
+        _playbackState.value = _playbackState.value.copy(
+            currentPositionMs = 0L,
+            durationMs = 0L,
+            bufferedPositionMs = 0L,
+            isBuffering = true,
+            isPlaying = false
+        )
     }
 
     fun release() {
