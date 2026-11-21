@@ -51,6 +51,8 @@ import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechViewModel
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModViewModel
+import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeScreen
+import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeViewModel
 import com.sumanonline.sumanmovies.ui.screens.player.PlayerActivity
 import com.sumanonline.sumanmovies.ui.screens.play4u.Play4UScreen
 import com.sumanonline.sumanmovies.ui.screens.play4u.Play4UViewModel
@@ -257,6 +259,9 @@ fun AppNavigation(
                         onNavigateToMoviesMod = {
                             navController.navigate(Screen.MoviesMod.route)
                         },
+                        onNavigateToReAnime = {
+                            navController.navigate(Screen.ReAnime.route)
+                        },
                         onNavigateToLiveTv = {
                             navController.navigate(Screen.LiveTv.route)
                         },
@@ -444,6 +449,23 @@ fun AppNavigation(
                     )
                 }
 
+                composable(Screen.ReAnime.route) {
+                    val reAnimeViewModel = remember(repository) { ReAnimeViewModel(repository) }
+                    ReAnimeScreen(
+                        viewModel = reAnimeViewModel,
+                        onBack = { navController.popBackStack() },
+                        onMediaClick = { item ->
+                            repository.cacheItem(item)
+                            repository.setSelectedServer(item.id, StreamingServer.REANIME)
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.REANIME
+                            )
+                        }
+                    )
+                }
+
                 composable(Screen.StreamingProviders.route) {
                     StreamingProvidersScreen(
                         onBack = { navController.popBackStack() },
@@ -452,6 +474,7 @@ fun AppNavigation(
                         onNavigateToKMDL = { navController.navigate(Screen.KMDL.route) },
                         onNavigateToMoviesLeech = { navController.navigate(Screen.MoviesLeech.route) },
                         onNavigateToMoviesMod = { navController.navigate(Screen.MoviesMod.route) },
+                        onNavigateToReAnime = { navController.navigate(Screen.ReAnime.route) },
                         onNavigateToLiveTv = { navController.navigate(Screen.LiveTv.route) },
                         onNavigateToCategory = { key, title ->
                             navController.navigate(Screen.CategoryMedia.createRoute(key, title))

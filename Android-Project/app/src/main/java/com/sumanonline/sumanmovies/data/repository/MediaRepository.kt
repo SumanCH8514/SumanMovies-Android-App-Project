@@ -24,6 +24,7 @@ import com.sumanonline.sumanmovies.data.remote.moviebox.MovieBoxMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviesleech.MoviesLeechMobileClient
 import com.sumanonline.sumanmovies.data.remote.moviesmod.MoviesModMobileClient
 import com.sumanonline.sumanmovies.data.remote.play4u.Play4UMobileClient
+import com.sumanonline.sumanmovies.data.remote.reanime.ReAnimeMobileClient
 import com.sumanonline.sumanmovies.data.remote.theintrodb.TheIntroDbClient
 import com.sumanonline.sumanmovies.data.remote.tmdb.TmdbRepository
 import android.util.LruCache
@@ -49,6 +50,7 @@ class MediaRepository(
     private val kmdlClient: KMDLMobileClient = KMDLMobileClient(),
     private val moviesLeechClient: MoviesLeechMobileClient = MoviesLeechMobileClient(),
     private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient(),
+    private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient(),
     private val theIntroDbClient: TheIntroDbClient = TheIntroDbClient()
 ) {
     private val searchCache = LruCache<String, Pair<Long, List<MediaItem>>>(60)
@@ -579,6 +581,18 @@ class MediaRepository(
         return results
     }
 
+    suspend fun getReAnimeCatalog(category: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
+        val res = reAnimeClient.getCatalog(category, page)
+        res.first.forEach { cacheItem(it) }
+        return res
+    }
+
+    suspend fun searchReAnime(query: String): List<MediaItem> {
+        val results = reAnimeClient.search(query)
+        results.forEach { cacheItem(it) }
+        return results
+    }
+
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
         return tmdbRepo.getSeasonEpisodes(tvId, seasonNumber)
     }
@@ -728,6 +742,13 @@ class MediaRepository(
             val mbDetails = movieBoxClient.getDetails(id)
             if (mbDetails != null) {
                 return mbDetails
+            }
+        }
+
+        if (id.startsWith("reanime:")) {
+            val reDetails = reAnimeClient.getDetails(id)
+            if (reDetails != null) {
+                return reDetails
             }
         }
 

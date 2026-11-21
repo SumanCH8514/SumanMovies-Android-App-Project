@@ -3,8 +3,11 @@ package com.sumanonline.sumanmovies.data.remote.reanime
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.sumanonline.sumanmovies.data.models.Episode
+import com.sumanonline.sumanmovies.data.models.MediaDetails
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.data.models.Season
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import kotlinx.coroutines.Dispatchers
@@ -36,11 +39,224 @@ class ReAnimeMobileClient {
     private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     private val mirrors = listOf("https://reanime.wtf", "https://reindex.to", "https://reanime.cz")
 
+    suspend fun getCatalog(category: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> = withContext(Dispatchers.IO) {
+        try {
+            val targetUrl = when (category?.lowercase()) {
+                "movies", "movie" -> "https://reanime.wtf/search?format=MOVIE"
+                "series", "tv" -> "https://reanime.wtf/search?format=TV"
+                else -> "https://reanime.wtf/"
+            }
+            val request = Request.Builder()
+                .url(targetUrl)
+                .header("User-Agent", mobileUserAgent)
+                .build()
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext Pair(emptyList(), 0)
+                val html = resp.body?.string() ?: return@withContext Pair(emptyList(), 0)
+                val items = parseAnimeHtml(html)
+                Pair(items, items.size)
+            }
+        } catch (_: Exception) {
+            Pair(emptyList(), 0)
+        }
+    }
+
+    suspend fun getDetails(idOrSlug: String): MediaDetails? = withContext(Dispatchers.IO) {
+        try {
+            val cleanId = idOrSlug.removePrefix("reanime:").trim()
+            val parts = cleanId.split(":")
+            val slug = if (parts.size >= 2) parts[1] else cleanId
+            val anilistIdFromId = if (parts.size >= 2) parts[0].toIntOrNull() else cleanId.toIntOrNull()
+
+            val url = "https://reanime.wtf/watch/$slug"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", mobileUserAgent)
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val html = resp.body?.string() ?: return@withContext null
+
+                val animeIdx = html.indexOf("anime:{")
+                if (animeIdx == -1) return@withContext null
+                val block = html.substring(animeIdx, minOf(animeIdx + 4000, html.length))
+
+                val engTitle = Regex("""title:\{english:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                val romajiTitle = Regex("""romaji:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                val nativeTitle = Regex("""native:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                val title = if (!engTitle.isNullOrBlank()) engTitle
+                    else if (!romajiTitle.isNullOrBlank()) romajiTitle
+                    else if (!nativeTitle.isNullOrBlank()) nativeTitle
+                    else slug.replace("-", " ")
+
+                val anilistId = Regex("""anilist_id:(\d+)""").find(block)?.groupValues?.get(1)?.toIntOrNull() ?: anilistIdFromId
+                val tmdbId = Regex("""themoviedb_id:(\d+)""").find(block)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 }
+                val imdbId = Regex("""imdb_id:"([^"]*)"""").find(block)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+
+                val fmt = Regex("""format:"([^"]*)"""").find(block)?.groupValues?.get(1) ?: "TV"
+                val isMovie = fmt.equals("MOVIE", ignoreCase = true)
+                val mediaType = if (isMovie) MediaType.MOVIE else MediaType.SERIES
+
+                val desc = Regex("""description:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                    ?.replace("\\n", "\n")?.replace("<br>", "\n")?.replace("\\u003Cbr>", "\n")?.replace(Regex("<[^>]*>"), "")
+
+                val year = Regex("""season_year:(\d{4})""").find(block)?.groupValues?.get(1)
+                val epTotal = Regex("""episodes_total:(\d+)""").find(block)?.groupValues?.get(1)?.toIntOrNull() ?: (if (isMovie) 1 else 12)
+
+                val episodes = mutableListOf<Episode>()
+                val epIdx = html.indexOf("episodes:[")
+                if (epIdx != -1) {
+                    val epEnd = html.indexOf("],", epIdx).takeIf { it != -1 } ?: html.length
+                    val epBlock = html.substring(epIdx, epEnd)
+                    val epMatches = Regex("""\{aired:[^}]*?episode_number:(\d+)[^}]*?title:"([^"]*)"""").findAll(epBlock)
+                    for (m in epMatches) {
+                        val num = m.groupValues[1].toIntOrNull() ?: continue
+                        val epT = m.groupValues[2].ifBlank { "Episode $num" }
+                        episodes.add(
+                            Episode(
+                                id = "reanime:ep:$num",
+                                episodeNumber = num,
+                                seasonNumber = 1,
+                                title = epT
+                            )
+                        )
+                    }
+                }
+
+                if (episodes.isEmpty()) {
+                    val count = if (isMovie) 1 else epTotal
+                    for (i in 1..count) {
+                        episodes.add(
+                            Episode(
+                                id = "reanime:ep:$i",
+                                episodeNumber = i,
+                                seasonNumber = 1,
+                                title = "Episode $i"
+                            )
+                        )
+                    }
+                }
+
+                val coverImg = Regex("""extra_large:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                    ?: Regex("""large:"([^"]*)"""").find(block)?.groupValues?.get(1)
+
+                val seasons = listOf(
+                    Season(
+                        seasonNumber = 1,
+                        name = "Season 1",
+                        episodeCount = episodes.size
+                    )
+                )
+
+                MediaDetails(
+                    id = idOrSlug,
+                    title = title,
+                    tmdbId = tmdbId,
+                    mediaType = mediaType,
+                    year = year,
+                    releaseDate = year,
+                    overview = desc,
+                    posterUrl = coverImg,
+                    backdropUrl = null,
+                    totalSeasons = 1,
+                    seasons = seasons,
+                    genres = listOf(if (isMovie) "Anime Movie" else "Anime Series"),
+                    provider = "reanime"
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun parseAnimeHtml(html: String): List<MediaItem> {
+        val results = mutableListOf<MediaItem>()
+        val parts = html.split("{anime_id:\"")
+        for (i in 1 until parts.size) {
+            val p = parts[i]
+            val endIdx = p.indexOf("},{anime_id:\"").takeIf { it != -1 } ?: p.indexOf("}]").takeIf { it != -1 } ?: p.length
+            val block = p.substring(0, endIdx)
+
+            val slug = block.substringBefore("\"")
+            if (slug.isBlank()) continue
+
+            val anilistId = Regex("""anilist_id:(\d+)""").find(block)?.groupValues?.get(1) ?: ""
+
+            val engTitle = Regex("""english:"([^"]*)"""").find(block)?.groupValues?.get(1)
+            val romajiTitle = Regex("""romaji:"([^"]*)"""").find(block)?.groupValues?.get(1)
+            val nativeTitle = Regex("""native:"([^"]*)"""").find(block)?.groupValues?.get(1)
+            val title = if (!engTitle.isNullOrBlank()) engTitle
+                else if (!romajiTitle.isNullOrBlank()) romajiTitle
+                else if (!nativeTitle.isNullOrBlank()) nativeTitle
+                else slug.replace("-", " ")
+
+            val img = Regex("""extra_large:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                ?: Regex("""large:"([^"]*)"""").find(block)?.groupValues?.get(1)
+                ?: Regex("""medium:"([^"]*)"""").find(block)?.groupValues?.get(1)
+
+            val fmt = Regex("""format:"([^"]*)"""").find(block)?.groupValues?.get(1) ?: "TV"
+            val isMovie = fmt.equals("MOVIE", ignoreCase = true)
+            val mediaType = if (isMovie) MediaType.MOVIE else MediaType.SERIES
+
+            val year = Regex("""season_year:(\d{4})""").find(block)?.groupValues?.get(1)
+            val scoreStr = Regex("""average_score:(\d+)""").find(block)?.groupValues?.get(1)
+            val rating = scoreStr?.toFloatOrNull()?.let { it / 10f }
+
+            val genresBlock = Regex("""genres:\[(.*?)\]""").find(block)?.groupValues?.get(1)
+            val genres = if (!genresBlock.isNullOrBlank()) {
+                genresBlock.split(",").map { it.trim().trim('"') }.filter { it.isNotBlank() }
+            } else {
+                listOf(if (isMovie) "Anime Movie" else "Anime Series")
+            }
+
+            val effectiveId = "reanime:$anilistId:$slug"
+            results.add(
+                MediaItem(
+                    id = effectiveId,
+                    title = title,
+                    mediaType = mediaType,
+                    year = year,
+                    rating = rating,
+                    posterUrl = img,
+                    backdropUrl = null,
+                    overview = "ReAnime • ${if (isMovie) "Movie" else "Series"}",
+                    genres = genres,
+                    provider = "reanime"
+                )
+            )
+        }
+        return results.distinctBy { it.id }
+    }
+
+    private fun searchReAnimeWebsite(query: String): List<MediaItem> {
+        return try {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val url = "https://reanime.wtf/search?q=$encoded"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", mobileUserAgent)
+                .build()
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val html = resp.body?.string() ?: return emptyList()
+                parseAnimeHtml(html)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
         val decomposed = java.text.Normalizer.normalize(query, java.text.Normalizer.Form.NFD)
         val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
         val trimmed = stripped.trim()
         if (trimmed.isBlank()) return@withContext emptyList()
+
+        val webResults = searchReAnimeWebsite(trimmed)
+        if (webResults.isNotEmpty()) {
+            return@withContext webResults
+        }
 
         val anilistResults = searchAniList(trimmed)
         if (anilistResults.isNotEmpty()) {
@@ -304,6 +520,9 @@ class ReAnimeMobileClient {
         isMovie: Boolean = false
     ): Pair<List<StreamSource>, List<SubtitleTrack>> = withContext(Dispatchers.IO) {
         val cleanId = idOrSlug.removePrefix("reanime:").trim()
+        val idParts = cleanId.split(":")
+        val explicitAniId = if (idParts.size >= 2) idParts[0].toIntOrNull() else cleanId.toIntOrNull()
+        val targetSlug = if (idParts.size >= 2) idParts[1] else cleanId
         val decomposed = java.text.Normalizer.normalize(title ?: "", java.text.Normalizer.Form.NFD)
         val stripped = Regex("\\p{InCombiningDiacriticalMarks}+").replace(decomposed, "")
         val cleanTitle = stripped
@@ -317,9 +536,9 @@ class ReAnimeMobileClient {
         var serverItems = emptyList<FlixServerItem>()
         var targetAnilistId: Int? = null
 
-        val baseId = cleanId.toIntOrNull()
+        val baseId = explicitAniId
             ?: if (!cleanTitle.isNullOrBlank()) resolveAniListId(cleanTitle, releaseYear, 1, isMovie) else null
-            ?: if (cleanId.isNotBlank()) resolveAniListId(cleanId, releaseYear, 1, isMovie) else null
+            ?: if (targetSlug.isNotBlank()) resolveAniListId(targetSlug, releaseYear, 1, isMovie) else null
 
         if (baseId != null && absoluteEpisode != null && absoluteEpisode > 0) {
             val absServers = fetchFlixServers(baseId, absoluteEpisode)

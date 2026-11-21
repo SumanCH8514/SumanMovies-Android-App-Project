@@ -17,6 +17,7 @@ import com.sumanonline.sumanmovies.data.models.StreamMirror
 import com.sumanonline.sumanmovies.data.models.StreamSource
 
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.util.StreamHealthValidator
 
 import kotlinx.coroutines.Dispatchers
 
@@ -617,154 +618,85 @@ class HDHub4uMobileClient {
 
 
 
+            val isPdLink = lockerUrl.contains("pixeldrain")
+            val effectiveUrl = if (isPdLink) StreamHealthValidator.normalizeDirectUrl(lockerUrl) else lockerUrl
             val mirrorName = when {
-
-                lockerUrl.contains("hubdrive") -> "HubDrive"
-
-                lockerUrl.contains("greenmotors") -> "HubCloud (GreenMotors)"
-
-                lockerUrl.contains("hubcdn") -> "HubCDN Instant"
-
-                lockerUrl.contains("pixeldrain") -> "PixelDrain Direct"
-
+                effectiveUrl.contains("hubdrive") -> "HubDrive"
+                effectiveUrl.contains("greenmotors") -> "HubCloud (GreenMotors)"
+                effectiveUrl.contains("hubcdn") -> "HubCDN Instant"
+                effectiveUrl.contains("pixeldrain") -> "PixelDrain Direct"
                 else -> "HDHub4u Fast Mirror"
-
             }
-
-            val mirrorList = listOf(StreamMirror(name = mirrorName, url = lockerUrl, isLocker = true))
-
-
+            val mirrorList = listOf(StreamMirror(name = mirrorName, url = effectiveUrl, isLocker = !isPdLink))
 
             val isMkv = labelText.contains(".mkv", ignoreCase = true) || labelText.contains("mkv", ignoreCase = true) || labelText.contains("bluray", ignoreCase = true)
-
-            if (seenUrls.add(lockerUrl)) {
-
+            if (seenUrls.add(effectiveUrl)) {
                 streams.add(
-
                     StreamSource(
-
                         quality = quality,
-
                         format = if (isMkv) "MKV" else "MP4",
-
-                        url = lockerUrl,
-
+                        url = effectiveUrl,
                         headers = mapOf(
-
                             "User-Agent" to mobileUserAgent,
-
                             "Referer" to pageUrl
-
                         ),
-
                         directFile = true,
-
                         codec = if (labelText.contains("HEVC", ignoreCase = true) || quality.contains("4K")) "HEVC" else "H.264",
-
                         label = "HDhub4u $quality ${if (labelText.contains("10Bit", ignoreCase = true)) "10Bit" else ""}".trim(),
-
                         provider = "hdhub4u",
-
                         title = labelText.ifBlank { "HDhub4u $quality" },
-
                         sourceQualityTag = if (labelText.contains("10Bit", ignoreCase = true)) "10Bit HEVC" else "HD",
-
                         category = cat,
-
-                        isLockerUrl = true,
-
+                        isLockerUrl = !isPdLink,
                         mirrors = mirrorList
-
                     )
-
                 )
-
             }
-
         }
-
-
 
         val firstStream = streams.firstOrNull()
-
         if (firstStream != null && firstStream.isLockerUrl) {
-
             try {
-
                 val resolved = resolveLockerUrl(firstStream.url)
-
-                if (resolved != null && resolved.url.isNotBlank()) {
-
+                if (resolved != null && resolved.url.isNotBlank() && resolved.isOnline) {
                     val directStream = firstStream.copy(
-
                         url = resolved.url,
-
                         headers = resolved.headers,
-
                         format = resolved.format,
-
                         codec = resolved.codec,
-
                         isLockerUrl = false,
-
-                        mirrors = listOf(StreamMirror(name = "Direct CDN", url = resolved.url, isLocker = false)) + firstStream.mirrors
-
+                        isOnline = resolved.isOnline,
+                        mirrors = listOf(StreamMirror(name = "Direct CDN", url = resolved.url, isLocker = false, isOnline = resolved.isOnline)) + firstStream.mirrors
                     )
-
                     return listOf(directStream) + streams.drop(1)
-
                 }
-
             } catch (_: Exception) {}
-
         }
 
-
-
-        val directPixelDrainRegex = Regex("""https?://pixeldrain\.com/(?:u|api/file)/([a-zA-Z0-9_-]+)""")
-
+        val directPixelDrainRegex = Regex("""https?://pixeldrain\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)""")
         for (pdMatch in directPixelDrainRegex.findAll(html)) {
-
             val fileId = pdMatch.groupValues[1]
-
-            val pdUrl = "https://pixeldrain.com/api/file/$fileId"
-
+            val pdUrl = "https://pixeldrain.com/api/file/$fileId?download"
             if (seenUrls.add(pdUrl)) {
-
+                val isLive = StreamHealthValidator.isStreamableMediaUrl(pdUrl)
                 streams.add(
-
                     StreamSource(
-
                         quality = "1080p FHD",
-
                         format = "MKV",
-
                         url = pdUrl,
-
                         headers = mapOf("User-Agent" to mobileUserAgent),
-
                         directFile = true,
-
                         codec = "HEVC",
-
                         label = "HDhub4u PixelDrain Fast CDN (1080p)",
-
                         provider = "hdhub4u",
-
                         title = "PixelDrain Fast CDN (1080p)",
-
                         sourceQualityTag = "1080p",
-
                         category = "1080p",
-
-                        isLockerUrl = false
-
+                        isLockerUrl = false,
+                        isOnline = isLive
                     )
-
                 )
-
             }
-
         }
 
 
@@ -924,16 +856,11 @@ class HDHub4uMobileClient {
 
 
 
-                initialUrl.contains("pixeldrain.com") -> {
-
-                    val fileId = initialUrl.substringAfterLast("/")
-
-                    if (fileId.isNotBlank()) {
-
-                        directUrls.add("https://pixeldrain.com/api/file/$fileId?download")
-
+                initialUrl.contains("pixeldrain.com") || initialUrl.contains("pixeldrain.dev") -> {
+                    val normalized = StreamHealthValidator.normalizeDirectUrl(initialUrl)
+                    if (normalized.isNotBlank()) {
+                        directUrls.add(normalized)
                     }
-
                 }
 
             }
@@ -1284,7 +1211,7 @@ class HDHub4uMobileClient {
 
     suspend fun resolveLockerUrl(url: String): StreamSource? = withContext(Dispatchers.IO) {
         val directUrls = resolveLockerWorkflow(url, primaryBaseUrl)
-        val firstDirect = directUrls.firstOrNull {
+        val candidates = directUrls.filter {
             (it.startsWith("http://") || it.startsWith("https://")) &&
                     !it.contains("greenmotors") &&
                     !it.contains("greenmountmotors") &&
@@ -1292,22 +1219,52 @@ class HDHub4uMobileClient {
                     !it.contains("hubcloud") &&
                     !it.contains("hubdrive") &&
                     !it.contains("gamerxyt")
-        } ?: return@withContext null
+        }
+        if (candidates.isEmpty()) return@withContext null
 
-        val isMkv = firstDirect.contains(".mkv", ignoreCase = true)
-        val quality = determineQualityFromLabel(url + " " + firstDirect)
+        val sortedCandidates = candidates.sortedWith(Comparator { a, b ->
+            val aIsPd = a.contains("pixeldrain")
+            val bIsPd = b.contains("pixeldrain")
+            when {
+                !aIsPd && bIsPd -> -1
+                aIsPd && !bIsPd -> 1
+                else -> 0
+            }
+        })
+
+        var chosenUrl: String? = null
+        var chosenIsOnline = true
+
+        for (candidate in sortedCandidates) {
+            val normalized = StreamHealthValidator.normalizeDirectUrl(candidate)
+            val isValid = StreamHealthValidator.isStreamableMediaUrl(normalized)
+            if (isValid) {
+                chosenUrl = normalized
+                chosenIsOnline = true
+                break
+            }
+        }
+
+        if (chosenUrl == null) {
+            chosenUrl = StreamHealthValidator.normalizeDirectUrl(sortedCandidates.first())
+            chosenIsOnline = false
+        }
+
+        val isMkv = chosenUrl.contains(".mkv", ignoreCase = true)
+        val quality = determineQualityFromLabel(url + " " + chosenUrl)
         StreamSource(
             quality = quality,
             format = if (isMkv) "MKV" else "MP4",
-            url = firstDirect.replace("&amp;", "&"),
+            url = chosenUrl.replace("&amp;", "&"),
             headers = mapOf(
                 "User-Agent" to mobileUserAgent
             ),
             directFile = true,
-            codec = if (quality.contains("4K") || firstDirect.contains("hevc", ignoreCase = true)) "HEVC" else "H.264",
+            codec = if (quality.contains("4K") || chosenUrl.contains("hevc", ignoreCase = true)) "HEVC" else "H.264",
             label = "HDhub4u Direct $quality",
             provider = "hdhub4u",
-            isLockerUrl = false
+            isLockerUrl = false,
+            isOnline = chosenIsOnline
         )
     }
 }

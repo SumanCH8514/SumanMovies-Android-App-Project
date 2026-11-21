@@ -101,6 +101,7 @@ fun CatalogScreen(
     onNavigateToKMDL: (() -> Unit)? = null,
     onNavigateToMoviesLeech: (() -> Unit)? = null,
     onNavigateToMoviesMod: (() -> Unit)? = null,
+    onNavigateToReAnime: (() -> Unit)? = null,
     onNavigateToLiveTv: (() -> Unit)? = null,
     onNavigateToAllProviders: (() -> Unit)? = null,
     onNavigateToCategory: ((String, String) -> Unit)? = null,
@@ -440,7 +441,7 @@ fun CatalogScreen(
                                 description = "High-definition anime series, continuous seasons & movies",
                                 icon = Icons.Default.AutoAwesome,
                                 accentColor = accent,
-                                onClick = { onNavigateToCategory?.invoke("popular_anime", "ReAnime - Anime HD") ?: onNavigateToAllProviders?.invoke() },
+                                onClick = { onNavigateToReAnime?.invoke() ?: onNavigateToAllProviders?.invoke() },
                                 modifier = Modifier.width(200.dp)
                             )
                         }

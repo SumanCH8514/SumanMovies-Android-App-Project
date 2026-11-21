@@ -35,6 +35,7 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 
 
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.util.StreamHealthValidator
 
 
 
@@ -1292,20 +1293,23 @@ class FourKHdHubMobileClient {
             }
             val strippedUrl = cleanUrl.substringBefore("#").trim()
 
-            if (cleanUrl.contains("pixeldrain.com")) {
-                val idMatch = Regex("""pixeldrain\.com/(?:u|api/file)/([a-zA-Z0-9_-]+)""").find(cleanUrl)
+            if (cleanUrl.contains("pixeldrain.com") || cleanUrl.contains("pixeldrain.dev")) {
+                val idMatch = Regex("""pixeldrain\.(?:com|dev)/(?:u|api/file)/([a-zA-Z0-9_-]+)""").find(cleanUrl)
                 val fileId = idMatch?.groupValues?.get(1)
                 if (fileId != null) {
+                    val pdUrl = "https://pixeldrain.com/api/file/$fileId?download"
+                    val isPdLive = StreamHealthValidator.isStreamableMediaUrl(pdUrl)
                     return@withContext StreamSource(
                         quality = "1080p Full HD",
                         format = "MKV",
-                        url = "https://pixeldrain.com/api/file/$fileId?download",
+                        url = pdUrl,
                         headers = mapOf("User-Agent" to mobileUserAgent),
                         directFile = true,
                         codec = "HEVC",
                         label = "Server 1 (PixelServer)",
                         provider = "fourkhdhub",
-                        isLockerUrl = false
+                        isLockerUrl = false,
+                        isOnline = isPdLive
                     )
                 }
             }
@@ -1403,61 +1407,21 @@ class FourKHdHubMobileClient {
 
 
             val directUrl = "https://pixeldrain.com/api/file/$fileId?download"
-
-
-
             if (seenUrls.add(directUrl)) {
-
-
-
+                val isLive = StreamHealthValidator.isStreamableMediaUrl(directUrl)
                 streams.add(
-
-
-
                     StreamSource(
-
-
-
                         quality = "1080p Full HD",
-
-
-
                         format = "MKV",
-
-
-
                         url = directUrl,
-
-
-
                         headers = mapOf("User-Agent" to mobileUserAgent),
-
-
-
                         directFile = true,
-
-
-
                         codec = "HEVC",
-
-
-
                         label = "4KHDHub PixelDrain Direct (1080p)",
-
-
-
-                        provider = "fourkhdhub"
-
-
-
+                        provider = "fourkhdhub",
+                        isOnline = isLive
                     )
-
-
-
                 )
-
-
-
             }
 
 

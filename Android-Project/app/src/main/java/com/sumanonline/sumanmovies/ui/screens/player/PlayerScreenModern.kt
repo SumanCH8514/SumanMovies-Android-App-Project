@@ -2687,18 +2687,21 @@ private fun DrawersAndDialogs(
                                             else -> stream.getDisplayTitle(currentServer)
                                         }.removePrefix("$formatBadge ").trim()
 
+                                        val isStreamOnline = stream.isOnline
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(12.dp))
                                                 .background(
-                                                    if (isPlayingThis) goldenAccent.copy(alpha = 0.12f)
+                                                    if (!isStreamOnline) Color(0xFF141419)
+                                                    else if (isPlayingThis) goldenAccent.copy(alpha = 0.12f)
                                                     else Color(0xFF16161D)
                                                 )
                                                 .border(
                                                     BorderStroke(
                                                         1.dp,
-                                                        if (isPlayingThis) goldenAccent
+                                                        if (!isStreamOnline) Color(0xFFEF4444).copy(alpha = 0.35f)
+                                                        else if (isPlayingThis) goldenAccent
                                                         else Color(0xFF1F1F27)
                                                     ),
                                                     RoundedCornerShape(12.dp)
@@ -2719,6 +2722,24 @@ private fun DrawersAndDialogs(
                                                         verticalAlignment = Alignment.CenterVertically,
                                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                     ) {
+                                                        if (!isStreamOnline) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .clip(RoundedCornerShape(4.dp))
+                                                                    .background(Color(0xFFEF4444).copy(alpha = 0.2f))
+                                                                    .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "OFFLINE",
+                                                                    color = Color(0xFFEF4444),
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    letterSpacing = 0.5.sp
+                                                                )
+                                                            }
+                                                        }
+
                                                         Box(
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(4.dp))
@@ -2838,6 +2859,22 @@ private fun DrawersAndDialogs(
                                                             )
                                                         }
                                                     }
+                                                } else if (!isStreamOnline) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(28.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(0xFF261418))
+                                                            .clickable { viewModel.selectStreamFromDrawer(stream) },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Close,
+                                                            contentDescription = "Stream offline",
+                                                            tint = Color(0xFFEF4444),
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                    }
                                                 } else {
                                                     Box(
                                                         modifier = Modifier
@@ -2865,6 +2902,7 @@ private fun DrawersAndDialogs(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     stream.mirrors.forEachIndexed { mirrorIdx, mirror ->
+                                                        val isMirrorOnline = mirror.isOnline
                                                         val isMirrorActive = isPlayingThis && (
                                                             (uiState.currentStream?.mirrorName != null && uiState.currentStream?.mirrorName == mirror.name) ||
                                                             (uiState.currentStream?.mirrorName == null && mirrorIdx == 0)
@@ -2889,13 +2927,15 @@ private fun DrawersAndDialogs(
                                                                 .weight(1f)
                                                                 .clip(RoundedCornerShape(6.dp))
                                                                 .background(
-                                                                    if (isMirrorActive) goldenAccent.copy(alpha = 0.22f)
+                                                                    if (!isMirrorOnline) Color(0xFF1B1417)
+                                                                    else if (isMirrorActive) goldenAccent.copy(alpha = 0.22f)
                                                                     else Color(0xFF16161D)
                                                                 )
                                                                 .border(
                                                                     BorderStroke(
                                                                         1.dp,
-                                                                        if (isMirrorActive) goldenAccent
+                                                                        if (!isMirrorOnline) Color(0xFFEF4444).copy(alpha = 0.35f)
+                                                                        else if (isMirrorActive) goldenAccent
                                                                         else Color.White.copy(alpha = 0.1f)
                                                                     ),
                                                                     RoundedCornerShape(6.dp)
@@ -2931,13 +2971,21 @@ private fun DrawersAndDialogs(
                                                                         }
                                                                         Text(
                                                                             text = serverLabel,
-                                                                            color = if (isMirrorActive) goldenAccent else Color.White,
+                                                                            color = if (isMirrorActive) goldenAccent else if (!isMirrorOnline) Color(0xFF94A3B8) else Color.White,
                                                                             fontSize = 9.5.sp,
                                                                             fontWeight = FontWeight.Bold,
                                                                             maxLines = 1
                                                                         )
                                                                     }
-                                                                    if (serverSub.isNotBlank()) {
+                                                                    if (!isMirrorOnline) {
+                                                                        Text(
+                                                                            text = "OFFLINE",
+                                                                            color = Color(0xFFEF4444),
+                                                                            fontSize = 7.5.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            maxLines = 1
+                                                                        )
+                                                                    } else if (serverSub.isNotBlank()) {
                                                                         Text(
                                                                             text = serverSub,
                                                                             color = if (isMirrorActive) goldenAccent.copy(alpha = 0.85f) else Color(0xFF94A3B8),

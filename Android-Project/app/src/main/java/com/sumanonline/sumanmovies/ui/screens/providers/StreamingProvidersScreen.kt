@@ -84,6 +84,7 @@ fun StreamingProvidersScreen(
     onNavigateToKMDL: (() -> Unit)? = null,
     onNavigateToMoviesLeech: (() -> Unit)? = null,
     onNavigateToMoviesMod: (() -> Unit)? = null,
+    onNavigateToReAnime: (() -> Unit)? = null,
     onNavigateToCategory: ((String, String) -> Unit)? = null
 ) {
     val accent = LocalAppAccent.current.color
@@ -189,7 +190,7 @@ fun StreamingProvidersScreen(
                 icon = Icons.Default.AutoAwesome,
                 tags = listOf("Anime Series", "Continuous Episodes", "Japanese Sub", "English Dub"),
                 actionLabel = "Browse Anime",
-                onAction = { onNavigateToCategory?.invoke("popular_anime", "ReAnime - Anime HD") ?: onNavigateToPlay4U() }
+                onAction = { onNavigateToReAnime?.invoke() ?: onNavigateToPlay4U() }
             ),
             ProviderInfo(
                 id = "iptv",

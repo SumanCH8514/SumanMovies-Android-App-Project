@@ -723,12 +723,12 @@ class PlaybackResolver(
     suspend fun resolveLockerUrl(url: String): StreamSource? {
         val cleanUrl = url.trim()
         val fourk = fourKHdHubClient.resolveLockerUrl(cleanUrl)
-        if (fourk != null && fourk.directFile && fourk.url.isNotBlank() && fourk.url != cleanUrl && !isLockerUrl(fourk.url)) {
+        if (fourk != null && fourk.directFile && fourk.url.isNotBlank() && fourk.url != cleanUrl && !isLockerUrl(fourk.url) && fourk.isOnline) {
             val sanitized = fourk.url.replace("&amp;", "&")
             return fourk.copy(url = sanitized, isLockerUrl = false)
         }
         val hdhub = hdHub4uClient.resolveLockerUrl(cleanUrl)
-        if (hdhub != null && hdhub.directFile && hdhub.url.isNotBlank() && hdhub.url != cleanUrl && !isLockerUrl(hdhub.url)) {
+        if (hdhub != null && hdhub.directFile && hdhub.url.isNotBlank() && hdhub.url != cleanUrl && !isLockerUrl(hdhub.url) && hdhub.isOnline) {
             val sanitized = hdhub.url.replace("&amp;", "&")
             return hdhub.copy(url = sanitized, isLockerUrl = false)
         }

@@ -15,6 +15,7 @@ sealed class Screen(val route: String) {
     object KMDL : Screen("kmdl")
     object MoviesLeech : Screen("moviesleech")
     object MoviesMod : Screen("moviesmod")
+    object ReAnime : Screen("reanime")
     object Details : Screen("details/{mediaId}/{mediaType}") {
         fun createRoute(mediaId: String, mediaType: String) =
             "details/${java.net.URLEncoder.encode(mediaId, "UTF-8")}/$mediaType"

@@ -27,7 +27,6 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
 import com.sumanonline.sumanmovies.SumanMoviesApp
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
@@ -980,7 +979,6 @@ class ExoPlayerManager(private val context: Context) {
 
         val extractorsFactory = DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
-            .setMatroskaExtractorFlags(MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES)
 
         val mimeType = when {
             stream.format.equals("DASH", ignoreCase = true) || stream.url.contains(".mpd") -> MimeTypes.APPLICATION_MPD
@@ -1049,7 +1047,9 @@ class ExoPlayerManager(private val context: Context) {
         } catch (_: Exception) { 10 }
         exoPlayer?.let { p ->
             val target = p.currentPosition + (step * 1000L)
-            p.seekTo(target.coerceAtMost(p.duration))
+            val dur = p.duration
+            val maxPos = if (dur > 0L) dur else Long.MAX_VALUE
+            p.seekTo(target.coerceAtMost(maxPos))
         }
     }
 

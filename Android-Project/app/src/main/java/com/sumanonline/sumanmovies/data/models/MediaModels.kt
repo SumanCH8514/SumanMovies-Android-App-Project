@@ -86,7 +86,8 @@ data class Episode(
 data class StreamMirror(
     val name: String,
     val url: String,
-    val isLocker: Boolean = true
+    val isLocker: Boolean = true,
+    val isOnline: Boolean = true
 )
 
 data class StreamSource(
@@ -107,10 +108,11 @@ data class StreamSource(
     val isLockerUrl: Boolean = false,
     val category: String = "1080p",
     val mirrors: List<StreamMirror> = emptyList(),
-    val isStreamable: Boolean = true
+    val isStreamable: Boolean = true,
+    val isOnline: Boolean = true
 ) {
     fun canStream(): Boolean {
-        if (!isStreamable) return false
+        if (!isStreamable || !isOnline) return false
         val lowUrl = url.lowercase()
         val lowFmt = format.lowercase()
         if (lowUrl.endsWith(".zip") || lowUrl.contains(".zip?") || lowUrl.contains(".mkv.zip") || lowUrl.contains(".rar") || lowFmt == "zip" || lowFmt == "rar") {

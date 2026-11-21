@@ -18,6 +18,7 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.StreamMirror
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.util.StreamHealthValidator
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -177,6 +178,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         val resolved = repository.resolveServer(srv, title, seasonNum, epNum, mediaId, releaseYear, false, absEp)
                         if (resolved.streams.isNotEmpty()) {
                             _serverStreamsCache[srv] = resolved.streams
+                            validateStreamsHealthAsync(srv, resolved.streams)
                             if (resolved.subtitles.isNotEmpty()) {
                                 _serverSubtitlesCache[srv] = resolved.subtitles
                             }
@@ -380,7 +382,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         val sameQualityCandidate = serverStreams.firstOrNull { candidate ->
             val key = "${candidate.url}#${candidate.quality}#${candidate.format}"
-            !failed.contains(key) && !failed.contains(candidate.url) && normalizeQualityBucket(candidate) == currentBucket
+            candidate.isOnline && !failed.contains(key) && !failed.contains(candidate.url) && normalizeQualityBucket(candidate) == currentBucket
         }
 
         val fallbackOrder = when (currentBucket) {
@@ -398,7 +400,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             for (bucket in fallbackOrder) {
                 val candidate = serverStreams.firstOrNull { c ->
                     val key = "${c.url}#${c.quality}#${c.format}"
-                    !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == bucket
+                    c.isOnline && !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == bucket
                 }
                 if (candidate != null) {
                     nextStream = candidate
@@ -430,10 +432,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (!altStreams.isNullOrEmpty()) {
                     val candidate = altStreams.firstOrNull { c ->
                         val key = "${c.url}#${c.quality}#${c.format}"
-                        !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == "1080p"
+                        c.isOnline && !failed.contains(key) && !failed.contains(c.url) && normalizeQualityBucket(c) == "1080p"
                     } ?: altStreams.firstOrNull { c ->
                         val key = "${c.url}#${c.quality}#${c.format}"
-                        !failed.contains(key) && !failed.contains(c.url)
+                        c.isOnline && !failed.contains(key) && !failed.contains(c.url)
                     }
                     if (candidate != null) {
                         altServerStream = altSrv to candidate
@@ -691,6 +693,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _serverSubtitlesCache.clear()
             if (mergedInitial.isNotEmpty()) {
                 _serverStreamsCache[serverEnum] = mergedInitial
+                validateStreamsHealthAsync(serverEnum, mergedInitial)
             }
             if (initialSubtitles.isNotEmpty()) {
                 _serverSubtitlesCache[serverEnum] = initialSubtitles
@@ -795,6 +798,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             _serverStreamsCache[serverEnum] = currentList
+            validateStreamsHealthAsync(serverEnum, currentList)
             val curMap = _uiState.value.serverStreamsMap.toMutableMap()
             curMap[serverEnum] = currentList
             val updatedQualities = getAvailableQualitiesForServer(currentList)
@@ -1176,6 +1180,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         absEp
                     )
                     _serverStreamsCache[server] = resolvedState.streams
+                    validateStreamsHealthAsync(server, resolvedState.streams)
                     if (resolvedState.subtitles.isNotEmpty()) {
                         _serverSubtitlesCache[server] = resolvedState.subtitles
                     }
@@ -1201,7 +1206,60 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = _uiState.value.copy(drawerSelectedQuality = quality)
     }
 
+    private fun validateStreamsHealthAsync(server: StreamingServer, streams: List<StreamSource>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var changed = false
+            val checkedStreams = streams.map { stream ->
+                var s = stream
+                val isPd = s.url.contains("pixeldrain.com") || s.url.contains("pixeldrain.dev")
+                if (isPd) {
+                    val norm = StreamHealthValidator.normalizeDirectUrl(s.url)
+                    val online = StreamHealthValidator.isStreamableMediaUrl(norm)
+                    if (s.isOnline != online || s.url != norm) {
+                        s = s.copy(url = norm, isOnline = online)
+                        changed = true
+                    }
+                }
+                if (s.mirrors.isNotEmpty()) {
+                    var mChanged = false
+                    val checkedMirrors = s.mirrors.map { mirror ->
+                        val mIsPd = mirror.url.contains("pixeldrain.com") || mirror.url.contains("pixeldrain.dev")
+                        if (mIsPd) {
+                            val norm = StreamHealthValidator.normalizeDirectUrl(mirror.url)
+                            val online = StreamHealthValidator.isStreamableMediaUrl(norm)
+                            if (mirror.isOnline != online || mirror.url != norm) {
+                                mChanged = true
+                                mirror.copy(url = norm, isOnline = online)
+                            } else mirror
+                        } else mirror
+                    }
+                    if (mChanged) {
+                        s = s.copy(mirrors = checkedMirrors)
+                        changed = true
+                    }
+                }
+                s
+            }
+            if (changed) {
+                _serverStreamsCache[server] = checkedStreams
+                synchronized(_serverStreamsCache) {
+                    val cur = _uiState.value.serverStreamsMap.toMutableMap()
+                    cur[server] = checkedStreams
+                    val curAvailable = if (_uiState.value.selectedServer == server) checkedStreams else _uiState.value.availableStreams
+                    _uiState.value = _uiState.value.copy(
+                        serverStreamsMap = cur,
+                        availableStreams = curAvailable
+                    )
+                }
+            }
+        }
+    }
+
     fun selectStreamFromDrawer(stream: StreamSource) {
+        if (!stream.isOnline) {
+            Toast.makeText(getApplication(), "This source is currently offline (link expired or bandwidth exceeded)", Toast.LENGTH_SHORT).show()
+            return
+        }
         val s = _uiState.value
         val targetServer = s.drawerSelectedServer
         val serverSubs = _serverSubtitlesCache[targetServer] ?: _serverSubtitles.value
@@ -1217,10 +1275,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectStreamMirror(stream: StreamSource, mirror: StreamMirror) {
+        if (!mirror.isOnline) {
+            Toast.makeText(getApplication(), "This mirror is currently offline (link expired or bandwidth exceeded)", Toast.LENGTH_SHORT).show()
+            return
+        }
         val targetStream = stream.copy(
             url = mirror.url,
             mirrorName = mirror.name,
-            isLockerUrl = mirror.isLocker || repository.isLockerUrl(mirror.url)
+            isLockerUrl = mirror.isLocker || repository.isLockerUrl(mirror.url),
+            isOnline = mirror.isOnline
         )
         val s = _uiState.value
         val targetServer = s.drawerSelectedServer
