@@ -3,6 +3,27 @@
 
 package com.sumanonline.sumanmovies.ui.screens.reanime
 
+import android.app.Activity
+import android.app.PictureInPictureParams
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.os.Build
+import android.util.Rational
+import android.view.WindowManager
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.launch
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -186,6 +207,15 @@ private fun formatTime(ms: Long): String {
     }
 }
 
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 @Composable
 fun ReAnimeDetailsScreen(
     viewModel: ReAnimeDetailsViewModel,
@@ -195,6 +225,45 @@ fun ReAnimeDetailsScreen(
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val configuration = LocalConfiguration.current
+
+    DisposableEffect(state.isFullscreen) {
+        val window = activity?.window
+        if (state.isFullscreen) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (window != null) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            if (window != null) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (window != null) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    LaunchedEffect(configuration.orientation) {
+        if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && !state.isFullscreen) {
+            viewModel.setFullscreen(true)
+        } else if (configuration.orientation == Configuration.ORIENTATION_PORTRAIT && state.isFullscreen) {
+            viewModel.setFullscreen(false)
+        }
+    }
 
     BackHandler(enabled = state.isFullscreen) {
         viewModel.setFullscreen(false)
@@ -457,6 +526,8 @@ private fun EmbeddedAnimePlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val coroutineScope = rememberCoroutineScope()
     val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
     val httpDataSourceFactory = remember {
@@ -491,6 +562,13 @@ private fun EmbeddedAnimePlayer(
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSubtitleSheet by remember { mutableStateOf(false) }
     var showDownloadSheet by remember { mutableStateOf(false) }
+
+    var showForwardIndicator by remember { mutableStateOf(false) }
+    var forwardSeekSeconds by remember { mutableIntStateOf(0) }
+    var showRewindIndicator by remember { mutableStateOf(false) }
+    var rewindSeekSeconds by remember { mutableIntStateOf(0) }
+    var lastForwardTime by remember { mutableLongStateOf(0L) }
+    var lastRewindTime by remember { mutableLongStateOf(0L) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -547,7 +625,7 @@ private fun EmbeddedAnimePlayer(
 
     LaunchedEffect(showControls, isPlaying) {
         if (showControls && isPlaying) {
-            delay(3800L)
+            delay(4200L)
             showControls = false
         }
     }
@@ -561,14 +639,50 @@ private fun EmbeddedAnimePlayer(
                         showControls = !showControls
                     },
                     onDoubleTap = { offset ->
-                        if (offset.x < size.width * 0.45f) {
-                            val target = maxOf(0L, exoPlayer.currentPosition - 10000L)
+                        val width = size.width
+                        val now = System.currentTimeMillis()
+                        val step = 10
+                        if (offset.x > width * 0.55f) {
+                            val accumulated = if (now - lastForwardTime < 850L) forwardSeekSeconds + step else step
+                            forwardSeekSeconds = accumulated
+                            lastForwardTime = now
+                            showForwardIndicator = true
+                            showRewindIndicator = false
+                            val target = minOf(exoPlayer.duration, exoPlayer.currentPosition + step * 1000L)
                             exoPlayer.seekTo(target)
                             currentPositionMs = target
-                        } else if (offset.x > size.width * 0.55f) {
-                            val target = minOf(exoPlayer.duration, exoPlayer.currentPosition + 10000L)
+                            coroutineScope.launch {
+                                delay(750L)
+                                if (System.currentTimeMillis() - lastForwardTime >= 700L) {
+                                    showForwardIndicator = false
+                                    forwardSeekSeconds = 0
+                                }
+                            }
+                        } else if (offset.x < width * 0.45f) {
+                            val accumulated = if (now - lastRewindTime < 850L) rewindSeekSeconds + step else step
+                            rewindSeekSeconds = accumulated
+                            lastRewindTime = now
+                            showRewindIndicator = true
+                            showForwardIndicator = false
+                            val target = maxOf(0L, exoPlayer.currentPosition - step * 1000L)
                             exoPlayer.seekTo(target)
                             currentPositionMs = target
+                            coroutineScope.launch {
+                                delay(750L)
+                                if (System.currentTimeMillis() - lastRewindTime >= 700L) {
+                                    showRewindIndicator = false
+                                    rewindSeekSeconds = 0
+                                }
+                            }
+                        } else {
+                            if (isPlaying) {
+                                exoPlayer.pause()
+                            } else {
+                                if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                    exoPlayer.seekTo(0L)
+                                }
+                                exoPlayer.play()
+                            }
                         }
                     }
                 )
@@ -721,7 +835,10 @@ private fun EmbeddedAnimePlayer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .padding(
+                            horizontal = if (isFullscreen) 20.dp else 10.dp,
+                            vertical = if (isFullscreen) 14.dp else 8.dp
+                        )
                         .align(Alignment.TopCenter),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -730,16 +847,13 @@ private fun EmbeddedAnimePlayer(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = onBack,
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.5f))
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = "Exit Fullscreen",
                                     tint = Color.White,
-                                    modifier = Modifier.size(19.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
@@ -747,7 +861,7 @@ private fun EmbeddedAnimePlayer(
                                 Text(
                                     text = details.displayTitle,
                                     color = Color.White,
-                                    fontSize = 13.5.sp,
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -755,7 +869,7 @@ private fun EmbeddedAnimePlayer(
                                 Text(
                                     text = "Episode ${state.currentlyPlayingEpisode}",
                                     color = LimeActive,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -766,63 +880,158 @@ private fun EmbeddedAnimePlayer(
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(if (isFullscreen) 12.dp else 8.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .clickable { showSubtitleSheet = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isSubtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
-                                contentDescription = "Subtitles",
-                                tint = if (isSubtitlesEnabled) LimeActive else Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(19.dp)
-                            )
+                        if (isFullscreen) {
+                            IconButton(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
+                                        try {
+                                            val params = PictureInPictureParams.Builder()
+                                                .setAspectRatio(Rational(16, 9))
+                                                .build()
+                                            activity.enterPictureInPictureMode(params)
+                                        } catch (_: Exception) {}
+                                    }
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PictureInPictureAlt,
+                                    contentDescription = "PiP",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .clickable { showDownloadSheet = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Download",
-                                tint = Color.White,
-                                modifier = Modifier.size(19.dp)
-                            )
+                        if (isFullscreen) {
+                            IconButton(
+                                onClick = { showSubtitleSheet = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isSubtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                                    contentDescription = "Subtitles",
+                                    tint = if (isSubtitlesEnabled) LimeActive else Color.White.copy(alpha = 0.65f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable { showSubtitleSheet = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isSubtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                                    contentDescription = "Subtitles",
+                                    tint = if (isSubtitlesEnabled) LimeActive else Color.White.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .clickable { showSettingsSheet = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = Color.White,
-                                modifier = Modifier.size(19.dp)
-                            )
+                        if (isFullscreen) {
+                            IconButton(
+                                onClick = { showDownloadSheet = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable { showDownloadSheet = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+
+                        if (isFullscreen) {
+                            IconButton(
+                                onClick = { showSettingsSheet = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable { showSettingsSheet = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
                         }
                     }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(if (isFullscreen) 64.dp else 48.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable {
+                            if (isPlaying) {
+                                exoPlayer.pause()
+                            } else {
+                                if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                    exoPlayer.seekTo(0L)
+                                }
+                                exoPlayer.play()
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(if (isFullscreen) 34.dp else 26.dp)
+                    )
                 }
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 6.dp)
+                        .padding(
+                            start = if (isFullscreen) 20.dp else 8.dp,
+                            end = if (isFullscreen) 20.dp else 8.dp,
+                            bottom = if (isFullscreen) 16.dp else 4.dp
+                        )
                 ) {
                     val activeMs = if (isDraggingSlider) sliderDragPosition else currentPositionMs
                     val progressFraction = if (durationMs > 0L) {
@@ -841,20 +1050,20 @@ private fun EmbeddedAnimePlayer(
                             isDraggingSlider = false
                         },
                         colors = SliderDefaults.colors(
-                            thumbColor = ScrubberBlue,
+                            thumbColor = Color(0xFF93C5FD),
                             activeTrackColor = ScrubberBlue,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                            inactiveTrackColor = Color.White.copy(alpha = 0.28f)
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(14.dp)
-                            .padding(horizontal = 4.dp)
+                            .height(16.dp)
+                            .padding(horizontal = 2.dp)
                     )
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -873,32 +1082,32 @@ private fun EmbeddedAnimePlayer(
                                         exoPlayer.play()
                                     }
                                 },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                     contentDescription = if (isPlaying) "Pause" else "Play",
                                     tint = Color.White,
-                                    modifier = Modifier.size(23.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
 
                             IconButton(
                                 onClick = { isMuted = !isMuted },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                                     contentDescription = if (isMuted) "Unmute" else "Mute",
                                     tint = Color.White,
-                                    modifier = Modifier.size(21.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
                             Text(
                                 text = "${formatTime(activeMs)} / ${formatTime(durationMs)}",
                                 color = Color.White,
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Medium
                             )
@@ -914,13 +1123,13 @@ private fun EmbeddedAnimePlayer(
                                     exoPlayer.seekTo(target)
                                     currentPositionMs = target
                                 },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Replay10,
                                     contentDescription = "Replay 10s",
                                     tint = Color.White,
-                                    modifier = Modifier.size(21.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
@@ -930,25 +1139,25 @@ private fun EmbeddedAnimePlayer(
                                     exoPlayer.seekTo(target)
                                     currentPositionMs = target
                                 },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Forward10,
                                     contentDescription = "Forward 10s",
                                     tint = Color.White,
-                                    modifier = Modifier.size(21.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
                             IconButton(
                                 onClick = onToggleFullscreen,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     imageVector = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                                     contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen",
                                     tint = Color.White,
-                                    modifier = Modifier.size(21.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -956,6 +1165,13 @@ private fun EmbeddedAnimePlayer(
                 }
             }
         }
+
+        DoubleTapSeekOverlay(
+            showForward = showForwardIndicator,
+            forwardSeconds = forwardSeekSeconds,
+            showRewind = showRewindIndicator,
+            rewindSeconds = rewindSeekSeconds
+        )
     }
 
     if (showSubtitleSheet) {
@@ -1526,6 +1742,91 @@ private fun EmbeddedAnimePlayer(
                     fontSize = 11.sp,
                     lineHeight = 15.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DoubleTapSeekOverlay(
+    showForward: Boolean,
+    forwardSeconds: Int,
+    showRewind: Boolean,
+    rewindSeconds: Int,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = showRewind,
+            enter = fadeIn() + scaleIn(initialScale = 0.82f),
+            exit = fadeOut() + scaleOut(targetScale = 0.82f),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .fillMaxWidth(0.42f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(topEndPercent = 100, bottomEndPercent = 100))
+                    .background(Color.White.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FastRewind,
+                        contentDescription = "Rewind",
+                        tint = Color.White,
+                        modifier = Modifier.size(42.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "-${rewindSeconds}s",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showForward,
+            enter = fadeIn() + scaleIn(initialScale = 0.82f),
+            exit = fadeOut() + scaleOut(targetScale = 0.82f),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .fillMaxWidth(0.42f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(topStartPercent = 100, bottomStartPercent = 100))
+                    .background(Color.White.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FastForward,
+                        contentDescription = "Forward",
+                        tint = Color.White,
+                        modifier = Modifier.size(42.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "+${forwardSeconds}s",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

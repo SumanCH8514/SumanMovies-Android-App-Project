@@ -1158,12 +1158,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleEpisodesDrawer() {
         val next = !_uiState.value.isEpisodesDrawerOpen
+        val currentSeason = _uiState.value.seasonNumber
         _uiState.value = _uiState.value.copy(
             isEpisodesDrawerOpen = next,
+            selectedDrawerSeason = if (next) currentSeason else _uiState.value.selectedDrawerSeason,
+            episodesDrawerTab = if (next) "EPISODES" else _uiState.value.episodesDrawerTab,
             isStreamsDrawerOpen = false,
             isAudioTracksModalOpen = false,
             isSubtitlesModalOpen = false
         )
+        if (next && _uiState.value.currentSeasonEpisodes.none { it.seasonNumber == currentSeason }) {
+            loadDrawerSeasonEpisodes(currentSeason, null, _uiState.value.tmdbId)
+        }
     }
 
     fun setEpisodesDrawerTab(tab: String) {

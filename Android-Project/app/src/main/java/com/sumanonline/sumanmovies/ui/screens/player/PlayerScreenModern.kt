@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -985,6 +986,39 @@ fun SeriesPlayerScreen(
     )
 
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+    val episodesListState = rememberLazyListState()
+
+    val targetEpisodeIndex = remember(
+        uiState.currentSeasonEpisodes,
+        uiState.seasonNumber,
+        uiState.episodeNumber,
+        uiState.selectedDrawerSeason
+    ) {
+        if (uiState.selectedDrawerSeason == uiState.seasonNumber) {
+            uiState.currentSeasonEpisodes.indexOfFirst {
+                it.seasonNumber == uiState.seasonNumber && it.episodeNumber == uiState.episodeNumber
+            }
+        } else {
+            -1
+        }
+    }
+
+    LaunchedEffect(
+        uiState.isEpisodesDrawerOpen,
+        uiState.episodesDrawerTab,
+        uiState.selectedDrawerSeason,
+        uiState.currentSeasonEpisodes.size,
+        targetEpisodeIndex
+    ) {
+        if (uiState.isEpisodesDrawerOpen && uiState.episodesDrawerTab == "EPISODES" && targetEpisodeIndex >= 0) {
+            if (targetEpisodeIndex > 0) {
+                delay(120L)
+                episodesListState.animateScrollToItem(targetEpisodeIndex)
+            } else {
+                episodesListState.scrollToItem(0)
+            }
+        }
+    }
 
     LaunchedEffect(resizeModeIndex) {
         playerViewRef?.resizeMode = resizeModes[resizeModeIndex % resizeModes.size]
@@ -1252,7 +1286,30 @@ fun SeriesPlayerScreen(
                         .padding(bottom = (navBarInset + 6.dp).coerceAtLeast(10.dp))
                         .padding(horizontal = 24.dp)
                 ) {
-                    if (uiState.hasPreviousEpisode || uiState.hasNextEpisode) {
+                    val durationMs = playbackState.durationMs.coerceAtLeast(0L)
+                    val currentPosMs = if (isDraggingSlider) {
+                        (sliderPosition * durationMs).toLong()
+                    } else {
+                        playbackState.currentPositionMs.coerceAtLeast(0L)
+                    }
+
+                    val progressFraction = if (durationMs > 0L) {
+                        (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+
+                    val hasHours = durationMs >= 3600_000L
+
+                    val isNearEnd = durationMs > 0L && (
+                        (durationMs - currentPosMs) <= 80_000L ||
+                        (durationMs > 60_000L && currentPosMs >= (durationMs * 0.95f).toLong())
+                    )
+                    val isCreditsActive = uiState.currentSkipSegment?.type == MediaSegmentType.CREDITS
+                    val showNextEpisodeButton = uiState.hasNextEpisode &&
+                        (isNearEnd || isCreditsActive)
+
+                    if (uiState.hasPreviousEpisode || showNextEpisodeButton) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1295,7 +1352,11 @@ fun SeriesPlayerScreen(
 
                             Spacer(modifier = Modifier.weight(1f))
 
-                            if (uiState.hasNextEpisode) {
+                            AnimatedVisibility(
+                                visible = showNextEpisodeButton,
+                                enter = fadeIn(tween(300)) + slideInHorizontally(tween(300)) { it / 2 },
+                                exit = fadeOut(tween(200)) + slideOutHorizontally(tween(200)) { it / 2 }
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
@@ -1330,21 +1391,6 @@ fun SeriesPlayerScreen(
                             }
                         }
                     }
-
-                    val durationMs = playbackState.durationMs.coerceAtLeast(0L)
-                    val currentPosMs = if (isDraggingSlider) {
-                        (sliderPosition * durationMs).toLong()
-                    } else {
-                        playbackState.currentPositionMs.coerceAtLeast(0L)
-                    }
-
-                    val progressFraction = if (durationMs > 0L) {
-                        (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                    } else {
-                        0f
-                    }
-
-                    val hasHours = durationMs >= 3600_000L
 
                     SeekPreviewView(
                         previewFrame = previewFrame,
@@ -1810,6 +1856,7 @@ fun SeriesPlayerScreen(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             LazyColumn(
+                                state = episodesListState,
                                 modifier = Modifier.fillMaxSize(),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
