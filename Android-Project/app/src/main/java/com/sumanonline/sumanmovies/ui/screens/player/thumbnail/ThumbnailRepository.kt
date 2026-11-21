@@ -4,24 +4,28 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import com.sumanonline.sumanmovies.ui.screens.player.PlaybackNetworkConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
+import java.io.FileOutputStream
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 class ThumbnailRepository(
     private val context: Context? = null,
     val cacheManager: ThumbnailCacheManager? = context?.let { ThumbnailCacheManager(it) }
 ) {
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val httpClient = PlaybackNetworkConfig.streamingHttpClient
 
     private val vttCuesByStream = ConcurrentHashMap<String, List<ThumbnailSpriteCue>>()
+    private val hlsSegmentsByStream = ConcurrentHashMap<String, List<HlsSegmentEntry>>()
+
+    @Volatile
+    private var activeRetrieverUrl: String? = null
+    private var activeRetriever: MediaMetadataRetriever? = null
+    private val retrieverLock = Any()
 
     fun registerWebVttCues(streamKey: String, cues: List<ThumbnailSpriteCue>) {
         vttCuesByStream[streamKey] = cues
@@ -72,7 +76,12 @@ class ThumbnailRepository(
             }
         }
 
-        val extractedBitmap = extractVideoFrame(streamUrl, headers, bucketTimestampMs)
+        val extractedBitmap = if (isHlsStream(streamUrl)) {
+            extractHlsFrame(streamUrl, headers, bucketTimestampMs)
+        } else {
+            extractProgressiveFrame(streamUrl, headers, bucketTimestampMs)
+        }
+
         if (extractedBitmap != null) {
             cacheManager?.putBitmap(cacheKey, extractedBitmap)
             return@withContext ThumbnailFrame(
@@ -90,22 +99,135 @@ class ThumbnailRepository(
         )
     }
 
-    private fun extractVideoFrame(
+    private fun isHlsStream(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains(".m3u8") || lower.contains("/hls/") || lower.contains("m3u8")
+    }
+
+    private fun extractHlsFrame(
         streamUrl: String,
         headers: Map<String, String>,
         timestampMs: Long
     ): Bitmap? {
-        val retriever = MediaMetadataRetriever()
+        val segments = hlsSegmentsByStream.getOrPut(streamUrl) {
+            fetchHlsSegments(streamUrl, headers)
+        }
+        if (segments.isEmpty()) {
+            return null
+        }
+
+        val targetSegment = segments.firstOrNull { it.contains(timestampMs) }
+            ?: segments.minByOrNull { Math.abs(it.startMs - timestampMs) }
+            ?: return null
+
+        return downloadAndExtractSegmentFrame(targetSegment.segmentUrl, headers, timestampMs - targetSegment.startMs)
+    }
+
+    private fun fetchHlsSegments(playlistUrl: String, headers: Map<String, String>): List<HlsSegmentEntry> {
         return try {
-            if (headers.isNotEmpty()) {
-                retriever.setDataSource(streamUrl, headers)
-            } else {
-                retriever.setDataSource(streamUrl, HashMap<String, String>())
+            val safeHeaders = sanitizeHeaders(headers)
+            val reqBuilder = Request.Builder().url(playlistUrl)
+            safeHeaders.forEach { (k, v) -> reqBuilder.header(k, v) }
+            val content = httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                resp.body?.string() ?: ""
             }
 
-            val timeUs = timestampMs * 1000L
+            if (content.isBlank()) return emptyList()
+
+            if (content.contains("#EXT-X-STREAM-INF")) {
+                val mediaPlaylistUrl = extractLowestBitrateVariant(content, playlistUrl)
+                if (mediaPlaylistUrl != null && mediaPlaylistUrl != playlistUrl) {
+                    return fetchHlsSegments(mediaPlaylistUrl, headers)
+                }
+            }
+
+            parseMediaPlaylist(content, playlistUrl)
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun extractLowestBitrateVariant(masterContent: String, baseUrl: String): String? {
+        val lines = masterContent.lines()
+        var lowestBandwidth = Long.MAX_VALUE
+        var bestUrl: String? = null
+
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                val bwMatch = Regex("""BANDWIDTH=(\d+)""").find(line)
+                val bw = bwMatch?.groupValues?.get(1)?.toLongOrNull() ?: Long.MAX_VALUE
+                if (i + 1 < lines.size) {
+                    val nextLine = lines[i + 1].trim()
+                    if (nextLine.isNotBlank() && !nextLine.startsWith("#")) {
+                        if (bw < lowestBandwidth) {
+                            lowestBandwidth = bw
+                            bestUrl = resolveUrl(baseUrl, nextLine)
+                        }
+                    }
+                }
+            }
+            i++
+        }
+        return bestUrl
+    }
+
+    private fun parseMediaPlaylist(content: String, baseUrl: String): List<HlsSegmentEntry> {
+        val result = mutableListOf<HlsSegmentEntry>()
+        val lines = content.lines()
+        var currentStartMs = 0L
+        var currentDurationMs = 0L
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("#EXTINF:")) {
+                val secStr = trimmed.substringAfter("#EXTINF:").substringBefore(",")
+                val sec = secStr.toDoubleOrNull() ?: 0.0
+                currentDurationMs = (sec * 1000.0).toLong()
+            } else if (trimmed.isNotBlank() && !trimmed.startsWith("#")) {
+                val segUrl = resolveUrl(baseUrl, trimmed)
+                val endMs = currentStartMs + currentDurationMs.coerceAtLeast(1000L)
+                result.add(HlsSegmentEntry(startMs = currentStartMs, endMs = endMs, segmentUrl = segUrl))
+                currentStartMs = endMs
+                currentDurationMs = 0L
+            }
+        }
+        return result
+    }
+
+    private fun downloadAndExtractSegmentFrame(
+        segmentUrl: String,
+        headers: Map<String, String>,
+        offsetMsInSegment: Long
+    ): Bitmap? {
+        val tempDir = context?.cacheDir ?: return null
+        val tempFile = File(tempDir, "hls_thumb_${segmentUrl.hashCode()}.tmp")
+        val retriever = MediaMetadataRetriever()
+
+        return try {
+            val safeHeaders = sanitizeHeaders(headers).toMutableMap()
+            if (!safeHeaders.containsKey("Range")) {
+                safeHeaders["Range"] = "bytes=0-524287"
+            }
+            val reqBuilder = Request.Builder().url(segmentUrl)
+            safeHeaders.forEach { (k, v) -> reqBuilder.header(k, v) }
+
+            httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val bytes = resp.body?.bytes() ?: return null
+                FileOutputStream(tempFile).use { fos ->
+                    fos.write(bytes)
+                    fos.flush()
+                }
+            }
+
+            retriever.setDataSource(tempFile.absolutePath)
+            val timeUs = (offsetMsInSegment.coerceAtLeast(0L)) * 1000L
             val raw = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 ?: retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST)
 
             if (raw != null) {
                 scaleDownThumbnail(raw, 240, 135)
@@ -118,7 +240,78 @@ class ThumbnailRepository(
             try {
                 retriever.release()
             } catch (_: Throwable) {}
+            try {
+                if (tempFile.exists()) tempFile.delete()
+            } catch (_: Throwable) {}
         }
+    }
+
+    private fun extractProgressiveFrame(
+        streamUrl: String,
+        headers: Map<String, String>,
+        timestampMs: Long
+    ): Bitmap? {
+        val safeHeaders = sanitizeHeaders(headers)
+        val finalUrl = resolveRedirectUrl(streamUrl, safeHeaders)
+
+        return synchronized(retrieverLock) {
+            try {
+                if (activeRetrieverUrl != finalUrl || activeRetriever == null) {
+                    try {
+                        activeRetriever?.release()
+                    } catch (_: Throwable) {}
+
+                    val newRetriever = MediaMetadataRetriever()
+                    newRetriever.setDataSource(finalUrl, safeHeaders)
+                    activeRetriever = newRetriever
+                    activeRetrieverUrl = finalUrl
+                }
+
+                val current = activeRetriever ?: return null
+                val timeUs = timestampMs * 1000L
+                val raw = current.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: current.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+
+                if (raw != null) {
+                    scaleDownThumbnail(raw, 240, 135)
+                } else {
+                    null
+                }
+            } catch (_: Throwable) {
+                try {
+                    activeRetriever?.release()
+                } catch (_: Throwable) {}
+                activeRetriever = null
+                activeRetrieverUrl = null
+                null
+            }
+        }
+    }
+
+    private fun resolveRedirectUrl(url: String, headers: Map<String, String>): String {
+        return try {
+            val reqBuilder = Request.Builder().url(url).head()
+            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+            httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                resp.request.url.toString()
+            }
+        } catch (_: Throwable) {
+            url
+        }
+    }
+
+    private fun sanitizeHeaders(headers: Map<String, String>): Map<String, String> {
+        val map = headers.toMutableMap()
+        if (!map.containsKey("User-Agent")) {
+            map["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        }
+        if (!map.containsKey("Accept")) {
+            map["Accept"] = "*/*"
+        }
+        if (!map.containsKey("Connection")) {
+            map["Connection"] = "keep-alive"
+        }
+        return map
     }
 
     private fun scaleDownThumbnail(source: Bitmap, targetW: Int, targetH: Int): Bitmap {
@@ -261,5 +454,17 @@ class ThumbnailRepository(
         } catch (_: Throwable) {
             relativeOrAbsolute
         }
+    }
+
+    fun releaseSession() {
+        synchronized(retrieverLock) {
+            try {
+                activeRetriever?.release()
+            } catch (_: Throwable) {}
+            activeRetriever = null
+            activeRetrieverUrl = null
+        }
+        hlsSegmentsByStream.clear()
+        vttCuesByStream.clear()
     }
 }

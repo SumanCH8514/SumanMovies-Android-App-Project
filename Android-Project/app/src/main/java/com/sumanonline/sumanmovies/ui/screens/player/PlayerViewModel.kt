@@ -547,6 +547,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             )
                         }
 
+                        val curStream = s.currentStream
+                        if (curStream != null) {
+                            thumbnailPreviewManager.startPrewarming(
+                                mediaId = s.mediaId,
+                                streamUrl = curStream.url,
+                                headers = curStream.headers,
+                                currentPosMs = current.currentPositionMs,
+                                durationMs = current.durationMs,
+                                posterUrl = s.backdropUrl ?: s.posterUrl
+                            )
+                        }
+
                         val pos = current.currentPositionMs
                         val segments = s.skipSegments
                         val activeSegment = if (pos > 0L && segments.isNotEmpty()) {
@@ -1425,6 +1437,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun switchStream(stream: StreamSource, overridePositionMs: Long? = null) {
+        thumbnailRepository.releaseSession()
         val currentPos = overridePositionMs ?: playerManager.playbackState.value.currentPositionMs
         val isLocker = stream.isLockerUrl || repository.isLockerUrl(stream.url)
         if (isLocker) {
@@ -1728,17 +1741,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             mediaId = s.mediaId,
             streamUrl = cur?.url,
             headers = cur?.headers ?: emptyMap(),
-            posterUrl = s.episodeStillUrl ?: s.posterUrl
+            posterUrl = s.episodeStillUrl ?: s.backdropUrl ?: s.posterUrl
         )
     }
 
-    fun clearSeekPreview() {
-        thumbnailPreviewManager.clearPreview()
+    fun clearSeekPreview(immediate: Boolean = false) {
+        thumbnailPreviewManager.clearPreview(immediate)
     }
 
     override fun onCleared() {
         super.onCleared()
-        thumbnailPreviewManager.clearPreview()
+        thumbnailPreviewManager.clearPreview(true)
+        thumbnailRepository.releaseSession()
         connectivityObserver.stopObserving()
         playerManager.release()
     }

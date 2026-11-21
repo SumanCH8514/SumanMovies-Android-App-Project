@@ -108,4 +108,30 @@ class ThumbnailEngineUnitTest {
         manager.clearPreview()
         assertNull(manager.previewFrame.value)
     }
+
+    @Test
+    fun testHlsSegmentEntryIntervalMatching() {
+        val segment = com.sumanonline.sumanmovies.ui.screens.player.thumbnail.HlsSegmentEntry(
+            startMs = 12000L,
+            endMs = 18000L,
+            segmentUrl = "https://cdn.example.com/hls/segment_2.ts"
+        )
+
+        assertFalse(segment.contains(11999L))
+        assertTrue(segment.contains(12000L))
+        assertTrue(segment.contains(15000L))
+        assertTrue(segment.contains(17999L))
+        assertFalse(segment.contains(18000L))
+    }
+
+    @Test
+    fun testNearestBucketCalculation() {
+        val targetMs = 32440L
+        val bucketIndex = targetMs / 10000L
+        assertEquals(3L, bucketIndex)
+
+        val deltas = listOf(1L, 2L, 3L)
+        val forwardBuckets = deltas.map { bucketIndex + it }
+        assertEquals(listOf(4L, 5L, 6L), forwardBuckets)
+    }
 }

@@ -424,7 +424,7 @@ fun PlayerScreenClassic(
                     val fraction = if (dur > 0f) (if (isDraggingSlider) sliderPosition else pos) / dur else 0f
 
                     SeekPreviewView(
-                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        previewFrame = previewFrame,
                         progressFraction = fraction,
                         durationMs = playbackState.durationMs
                     )
@@ -438,7 +438,7 @@ fun PlayerScreenClassic(
                         },
                         onValueChangeFinished = {
                             isDraggingSlider = false
-                            viewModel.clearSeekPreview()
+                            viewModel.clearSeekPreview(immediate = false)
                             if (playbackState.isSeekable) {
                                 viewModel.playerManager.seekTo(sliderPosition.toLong())
                             }

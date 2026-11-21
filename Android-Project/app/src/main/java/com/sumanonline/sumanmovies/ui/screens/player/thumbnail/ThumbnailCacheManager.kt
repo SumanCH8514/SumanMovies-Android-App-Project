@@ -41,6 +41,23 @@ class ThumbnailCacheManager(context: Context) {
         return null
     }
 
+    fun getNearestBitmap(mediaId: String, streamHash: Int, targetBucketIndex: Long, maxBucketDelta: Long = 6): Bitmap? {
+        val exactKey = "${mediaId}_${streamHash}_${targetBucketIndex}"
+        val exact = getBitmap(exactKey)
+        if (exact != null) return exact
+
+        for (delta in 1..maxBucketDelta) {
+            val forwardKey = "${mediaId}_${streamHash}_${targetBucketIndex + delta}"
+            val forward = getBitmap(forwardKey)
+            if (forward != null) return forward
+
+            val backwardKey = "${mediaId}_${streamHash}_${targetBucketIndex - delta}"
+            val backward = getBitmap(backwardKey)
+            if (backward != null) return backward
+        }
+        return null
+    }
+
     fun putBitmap(key: String, bitmap: Bitmap) {
         if (bitmap.isRecycled) return
         memoryCache.put(key, bitmap)

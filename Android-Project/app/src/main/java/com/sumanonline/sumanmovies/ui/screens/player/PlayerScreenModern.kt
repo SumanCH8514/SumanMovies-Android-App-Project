@@ -672,7 +672,7 @@ fun MoviePlayerScreen(
                     val hasHours = durationMs >= 3600_000L
 
                     SeekPreviewView(
-                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        previewFrame = previewFrame,
                         progressFraction = progressFraction,
                         durationMs = durationMs
                     )
@@ -698,7 +698,7 @@ fun MoviePlayerScreen(
                             },
                             onValueChangeFinished = {
                                 isDraggingSlider = false
-                                viewModel.clearSeekPreview()
+                                viewModel.clearSeekPreview(immediate = false)
                                 if (playbackState.isSeekable) {
                                     val targetMs = (sliderPosition * durationMs).toLong()
                                     viewModel.playerManager.seekTo(targetMs)
@@ -1347,7 +1347,7 @@ fun SeriesPlayerScreen(
                     val hasHours = durationMs >= 3600_000L
 
                     SeekPreviewView(
-                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        previewFrame = previewFrame,
                         progressFraction = progressFraction,
                         durationMs = durationMs
                     )
@@ -1373,7 +1373,7 @@ fun SeriesPlayerScreen(
                             },
                             onValueChangeFinished = {
                                 isDraggingSlider = false
-                                viewModel.clearSeekPreview()
+                                viewModel.clearSeekPreview(immediate = false)
                                 if (playbackState.isSeekable) {
                                     val targetMs = (sliderPosition * durationMs).toLong()
                                     viewModel.playerManager.seekTo(targetMs)

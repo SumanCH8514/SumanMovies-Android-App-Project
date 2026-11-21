@@ -106,9 +106,11 @@ tasks.register<Copy>("copyDebugApk") {
 tasks.register<Exec>("pushApkToGithub") {
     dependsOn("copyDebugApk", "copyNewPlayerApk")
     workingDir = rootProject.file("..")
-    commandLine("cmd", "/c", "git add . && git commit -m \"feat: update latest built APK and player improvements\" && git push origin main > scratch_git_push.txt 2>&1")
+    commandLine("cmd", "/c", "git add . && git commit -m \"feat: update latest built APK and ReAnime details fixes\" && git push origin main > scratch_git_push.txt 2>&1")
     isIgnoreExitValue = true
 }
+
+
 
 
 

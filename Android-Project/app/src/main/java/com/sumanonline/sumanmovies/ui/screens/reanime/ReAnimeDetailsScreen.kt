@@ -1,13 +1,20 @@
+@file:kotlin.OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.sumanonline.sumanmovies.ui.screens.reanime
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -43,24 +50,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.SubtitlesOff
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -68,18 +75,24 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,6 +111,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,8 +120,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -120,6 +137,7 @@ import com.sumanonline.sumanmovies.data.models.ReAnimeAnimeDetails
 import com.sumanonline.sumanmovies.data.models.ReAnimeEpisode
 import com.sumanonline.sumanmovies.data.models.ReAnimeSeasonRelation
 import com.sumanonline.sumanmovies.data.models.ReAnimeServerOption
+import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.ui.theme.BgDark
 import com.sumanonline.sumanmovies.ui.theme.CardDark
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
@@ -151,6 +169,7 @@ class ChamferedCornerShape(private val cornerSize: Float = 14f) : Shape {
 private val TileChamferShape = ChamferedCornerShape(12f)
 private val LimeActive = Color(0xFFA3E635)
 private val AmberFiller = Color(0xFFF59E0B)
+private val ScrubberBlue = Color(0xFF0284C7)
 private val DarkTileBg = Color(0xFF161618)
 private val DarkTileBorder = Color(0xFF27272A)
 
@@ -175,7 +194,6 @@ fun ReAnimeDetailsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val accent = LocalAppAccent.current.color
-    val context = LocalContext.current
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     BackHandler(enabled = state.isFullscreen) {
@@ -232,31 +250,12 @@ fun ReAnimeDetailsScreen(
                         details = details,
                         accent = accent,
                         isFullscreen = true,
-                        topInset = topInset,
                         onBack = { viewModel.setFullscreen(false) },
                         onToggleFullscreen = { viewModel.setFullscreen(false) },
                         onSwitchServer = { viewModel.switchServer(it) },
-                        onToggleMode = { viewModel.togglePlayerMode() },
                         onRetryPlayback = { viewModel.playEpisodeNumber(state.currentlyPlayingEpisode) },
-                        onSelectNextEpisode = {
-                            val next = state.currentlyPlayingEpisode + 1
-                            if (next <= state.totalEpisodesCount) {
-                                viewModel.playEpisodeNumber(next)
-                            }
-                        },
-                        onSelectPrevEpisode = {
-                            val prev = state.currentlyPlayingEpisode - 1
-                            if (prev >= 1) {
-                                viewModel.playEpisodeNumber(prev)
-                            }
-                        },
-                        onShare = {
-                            val sendIntent = Intent().apply {
-                                action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "Watch ${details.displayTitle} on SumanMovies!")
-                                type = "text/plain"
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share Anime"))
+                        onDownloadEpisode = { ep, st ->
+                            viewModel.startDownload(details, ep, st)
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -267,39 +266,29 @@ fun ReAnimeDetailsScreen(
                         .fillMaxSize()
                         .padding(top = topInset)
                 ) {
+                    BreadcrumbNavHeader(
+                        animeTitle = details.displayTitle,
+                        episodeNumber = state.currentlyPlayingEpisode,
+                        onBack = onBack
+                    )
+
                     EmbeddedAnimePlayer(
                         state = state,
                         details = details,
                         accent = accent,
                         isFullscreen = false,
-                        topInset = 0.dp,
                         onBack = onBack,
                         onToggleFullscreen = { viewModel.setFullscreen(true) },
                         onSwitchServer = { viewModel.switchServer(it) },
-                        onToggleMode = { viewModel.togglePlayerMode() },
                         onRetryPlayback = { viewModel.playEpisodeNumber(state.currentlyPlayingEpisode) },
-                        onSelectNextEpisode = {
-                            val next = state.currentlyPlayingEpisode + 1
-                            if (next <= state.totalEpisodesCount) {
-                                viewModel.playEpisodeNumber(next)
-                            }
-                        },
-                        onSelectPrevEpisode = {
-                            val prev = state.currentlyPlayingEpisode - 1
-                            if (prev >= 1) {
-                                viewModel.playEpisodeNumber(prev)
-                            }
-                        },
-                        onShare = {
-                            val sendIntent = Intent().apply {
-                                action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "Watch ${details.displayTitle} on SumanMovies!")
-                                type = "text/plain"
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share Anime"))
+                        onDownloadEpisode = { ep, st ->
+                            viewModel.startDownload(details, ep, st)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(BorderStroke(1.dp, Color(0xFF27272A)), RoundedCornerShape(14.dp))
                             .aspectRatio(16f / 9f)
                     )
 
@@ -390,22 +379,81 @@ fun ReAnimeDetailsScreen(
     }
 }
 
-@OptIn(UnstableApi::class)
+@Composable
+private fun BreadcrumbNavHeader(
+    animeTitle: String,
+    episodeNumber: Int,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.size(26.dp)
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = Color.White,
+                modifier = Modifier.size(17.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "Home",
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.clickable { onBack() }
+        )
+        Text(
+            text = "  ›  ",
+            color = TextMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Light
+        )
+        Text(
+            text = animeTitle.uppercase(),
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        Text(
+            text = "  ›  ",
+            color = TextMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Light
+        )
+        Text(
+            text = "Episode $episodeNumber",
+            color = LimeActive,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+    }
+}
+
+@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun EmbeddedAnimePlayer(
     state: ReAnimeDetailsUiState,
     details: ReAnimeAnimeDetails,
     accent: Color,
     isFullscreen: Boolean,
-    topInset: androidx.compose.ui.unit.Dp,
     onBack: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onSwitchServer: (ReAnimeServerOption) -> Unit,
-    onToggleMode: () -> Unit,
     onRetryPlayback: () -> Unit,
-    onSelectNextEpisode: () -> Unit,
-    onSelectPrevEpisode: () -> Unit,
-    onShare: () -> Unit,
+    onDownloadEpisode: (ReAnimeEpisode, StreamSource) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -436,7 +484,13 @@ private fun EmbeddedAnimePlayer(
     var showControls by remember { mutableStateOf(true) }
     var isDraggingSlider by remember { mutableStateOf(false) }
     var sliderDragPosition by remember { mutableLongStateOf(0L) }
-    var serverMenuExpanded by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
+    var isSubtitlesEnabled by remember { mutableStateOf(true) }
+    var selectedSubtitleTrackId by remember { mutableStateOf<String?>(null) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+    var showSubtitleSheet by remember { mutableStateOf(false) }
+    var showDownloadSheet by remember { mutableStateOf(false) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -467,6 +521,21 @@ private fun EmbeddedAnimePlayer(
         }
     }
 
+    LaunchedEffect(isMuted) {
+        exoPlayer.volume = if (isMuted) 0f else 1f
+    }
+
+    LaunchedEffect(isSubtitlesEnabled) {
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !isSubtitlesEnabled)
+            .build()
+    }
+
+    LaunchedEffect(playbackSpeed) {
+        exoPlayer.setPlaybackSpeed(playbackSpeed)
+    }
+
     LaunchedEffect(isPlaying, isDraggingSlider) {
         while (isPlaying && !isDraggingSlider) {
             currentPositionMs = maxOf(0L, exoPlayer.currentPosition)
@@ -490,6 +559,17 @@ private fun EmbeddedAnimePlayer(
                 detectTapGestures(
                     onTap = {
                         showControls = !showControls
+                    },
+                    onDoubleTap = { offset ->
+                        if (offset.x < size.width * 0.45f) {
+                            val target = maxOf(0L, exoPlayer.currentPosition - 10000L)
+                            exoPlayer.seekTo(target)
+                            currentPositionMs = target
+                        } else if (offset.x > size.width * 0.55f) {
+                            val target = minOf(exoPlayer.duration, exoPlayer.currentPosition + 10000L)
+                            exoPlayer.seekTo(target)
+                            currentPositionMs = target
+                        }
                     }
                 )
             }
@@ -566,32 +646,21 @@ private fun EmbeddedAnimePlayer(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f))
+                        .background(Color.Black.copy(alpha = 0.35f))
                 )
             }
         }
 
         if (state.isLoadingPlayback || (isBuffering && !state.isWebEmbedMode)) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        color = LimeActive,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(42.dp)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Loading Episode ${state.currentlyPlayingEpisode}...",
-                        color = Color.White,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(48.dp)
+                )
             }
         }
 
@@ -608,7 +677,7 @@ private fun EmbeddedAnimePlayer(
                         imageVector = Icons.Default.Warning,
                         contentDescription = "Error",
                         tint = AmberFiller,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(34.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -618,26 +687,13 @@ private fun EmbeddedAnimePlayer(
                         textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            onClick = onRetryPlayback,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF27272A))
-                        ) {
-                            Text("Retry", color = LimeActive, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        if (!state.isWebEmbedMode && !state.playbackInfo?.embedUrl.isNullOrBlank()) {
-                            TextButton(
-                                onClick = onToggleMode,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(LimeActive.copy(alpha = 0.2f))
-                            ) {
-                                Text("Try Web Embed", color = LimeActive, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
+                    TextButton(
+                        onClick = onRetryPlayback,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF27272A))
+                    ) {
+                        Text("Retry", color = LimeActive, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -655,8 +711,8 @@ private fun EmbeddedAnimePlayer(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                Color.Black.copy(alpha = 0.8f),
-                                Color.Black.copy(alpha = 0.2f),
+                                Color.Black.copy(alpha = 0.72f),
+                                Color.Transparent,
                                 Color.Black.copy(alpha = 0.85f)
                             )
                         )
@@ -665,218 +721,98 @@ private fun EmbeddedAnimePlayer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = topInset + 6.dp, start = 8.dp, end = 8.dp)
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
                         .align(Alignment.TopCenter),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        IconButton(
-                            onClick = onBack,
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.5f))
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Column {
-                            val epObj = state.currentPlayingEpisodeObj
-                            Text(
-                                text = "EP ${state.currentlyPlayingEpisode} • ${epObj?.title ?: details.displayTitle}",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = details.displayTitle,
-                                color = TextMuted,
-                                fontSize = 10.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box {
-                            val curServer = state.selectedServer?.serverName ?: "HD-1"
-                            val curType = state.selectedServer?.dataType?.uppercase() ?: "SUB"
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color.Black.copy(alpha = 0.6f))
-                                    .border(BorderStroke(1.dp, Color(0xFF3F3F46)), RoundedCornerShape(6.dp))
-                                    .clickable { serverMenuExpanded = true }
-                                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "$curServer [$curType]",
-                                    color = LimeActive,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = null,
-                                    tint = LimeActive,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = serverMenuExpanded,
-                                onDismissRequest = { serverMenuExpanded = false },
-                                modifier = Modifier.background(CardDark)
-                            ) {
-                                val srvList = state.playbackInfo?.servers ?: emptyList()
-                                if (srvList.isEmpty()) {
-                                    DropdownMenuItem(
-                                        text = { Text("No other servers", color = TextMuted, fontSize = 12.sp) },
-                                        onClick = { serverMenuExpanded = false }
-                                    )
-                                } else {
-                                    srvList.forEach { srv ->
-                                        val isSel = srv.accessId == state.selectedServer?.accessId && srv.dataType == state.selectedServer?.dataType
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    text = "${srv.serverName} • ${srv.dataType.uppercase()}",
-                                                    color = if (isSel) LimeActive else TextPrimary,
-                                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                                    fontSize = 12.sp
-                                                )
-                                            },
-                                            onClick = {
-                                                onSwitchServer(srv)
-                                                serverMenuExpanded = false
-                                            },
-                                            colors = MenuDefaults.itemColors()
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        IconButton(
-                            onClick = onToggleMode,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (state.isWebEmbedMode) Color(0xFF3F3F46) else Color.Black.copy(alpha = 0.6f))
-                                .border(BorderStroke(1.dp, Color(0xFF3F3F46)), RoundedCornerShape(6.dp))
-                        ) {
-                            Icon(
-                                imageVector = if (state.isWebEmbedMode) Icons.Default.Public else Icons.Default.Bolt,
-                                contentDescription = "Toggle Player Mode",
-                                tint = if (state.isWebEmbedMode) LimeActive else Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        if (!isFullscreen) {
+                    if (isFullscreen) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
-                                onClick = onShare,
+                                onClick = onBack,
                                 modifier = Modifier
-                                    .size(32.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Color.Black.copy(alpha = 0.5f))
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Share",
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Exit Fullscreen",
                                     tint = Color.White,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = details.displayTitle,
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Episode ${state.currentlyPlayingEpisode}",
+                                    color = LimeActive,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
+                    } else {
+                        Spacer(modifier = Modifier.size(36.dp))
                     }
-                }
 
-                if (!state.isWebEmbedMode) {
                     Row(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        IconButton(
-                            onClick = {
-                                val target = maxOf(0L, exoPlayer.currentPosition - 10000L)
-                                exoPlayer.seekTo(target)
-                                currentPositionMs = target
-                            },
+                        Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.45f))
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .clickable { showSubtitleSheet = true },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.FastRewind,
-                                contentDescription = "Rewind 10s",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
+                                imageVector = if (isSubtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                                contentDescription = "Subtitles",
+                                tint = if (isSubtitlesEnabled) LimeActive else Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.size(19.dp)
                             )
                         }
 
-                        IconButton(
-                            onClick = {
-                                if (isPlaying) {
-                                    exoPlayer.pause()
-                                } else {
-                                    if (exoPlayer.playbackState == Player.STATE_ENDED) {
-                                        exoPlayer.seekTo(0L)
-                                    }
-                                    exoPlayer.play()
-                                }
-                            },
+                        Box(
                             modifier = Modifier
-                                .size(54.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
-                                .background(LimeActive)
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .clickable { showDownloadSheet = true },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = Color.Black,
-                                modifier = Modifier.size(32.dp)
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Download",
+                                tint = Color.White,
+                                modifier = Modifier.size(19.dp)
                             )
                         }
 
-                        IconButton(
-                            onClick = {
-                                val target = minOf(exoPlayer.duration, exoPlayer.currentPosition + 10000L)
-                                exoPlayer.seekTo(target)
-                                currentPositionMs = target
-                            },
+                        Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.45f))
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .clickable { showSettingsSheet = true },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.FastForward,
-                                contentDescription = "Forward 10s",
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
                                 tint = Color.White,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
@@ -886,111 +822,710 @@ private fun EmbeddedAnimePlayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .padding(bottom = 6.dp)
                 ) {
-                    if (!state.isWebEmbedMode) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val activeMs = if (isDraggingSlider) sliderDragPosition else currentPositionMs
-                            Text(
-                                text = formatTime(activeMs),
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                    val activeMs = if (isDraggingSlider) sliderDragPosition else currentPositionMs
+                    val progressFraction = if (durationMs > 0L) {
+                        (activeMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                    } else 0f
 
-                            val progressFraction = if (durationMs > 0L) {
-                                (activeMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                            } else 0f
-
-                            Slider(
-                                value = progressFraction,
-                                onValueChange = { frac ->
-                                    isDraggingSlider = true
-                                    sliderDragPosition = (frac * durationMs).toLong()
-                                },
-                                onValueChangeFinished = {
-                                    exoPlayer.seekTo(sliderDragPosition)
-                                    currentPositionMs = sliderDragPosition
-                                    isDraggingSlider = false
-                                },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = LimeActive,
-                                    activeTrackColor = LimeActive,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 6.dp)
-                            )
-
-                            Text(
-                                text = formatTime(durationMs),
-                                color = TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
+                    Slider(
+                        value = progressFraction,
+                        onValueChange = { frac ->
+                            isDraggingSlider = true
+                            sliderDragPosition = (frac * durationMs).toLong()
+                        },
+                        onValueChangeFinished = {
+                            exoPlayer.seekTo(sliderDragPosition)
+                            currentPositionMs = sliderDragPosition
+                            isDraggingSlider = false
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = ScrubberBlue,
+                            activeTrackColor = ScrubberBlue,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(14.dp)
+                            .padding(horizontal = 4.dp)
+                    )
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             IconButton(
-                                onClick = onSelectPrevEpisode,
-                                enabled = state.currentlyPlayingEpisode > 1,
-                                modifier = Modifier.size(28.dp)
+                                onClick = {
+                                    if (isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                            exoPlayer.seekTo(0L)
+                                        }
+                                        exoPlayer.play()
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.SkipPrevious,
-                                    contentDescription = "Previous Episode",
-                                    tint = if (state.currentlyPlayingEpisode > 1) Color.White else TextMuted,
-                                    modifier = Modifier.size(18.dp)
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(23.dp)
                                 )
                             }
 
                             IconButton(
-                                onClick = onSelectNextEpisode,
-                                enabled = state.currentlyPlayingEpisode < state.totalEpisodesCount,
-                                modifier = Modifier.size(28.dp)
+                                onClick = { isMuted = !isMuted },
+                                modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.SkipNext,
-                                    contentDescription = "Next Episode",
-                                    tint = if (state.currentlyPlayingEpisode < state.totalEpisodesCount) Color.White else TextMuted,
-                                    modifier = Modifier.size(18.dp)
+                                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(21.dp)
                                 )
                             }
 
                             Text(
-                                text = "EP ${state.currentlyPlayingEpisode} / ${state.totalEpisodesCount}",
-                                color = TextSecondary,
-                                fontSize = 11.sp,
+                                text = "${formatTime(activeMs)} / ${formatTime(durationMs)}",
+                                color = Color.White,
+                                fontSize = 11.5.sp,
+                                fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Medium
                             )
                         }
 
-                        IconButton(
-                            onClick = onToggleFullscreen,
-                            modifier = Modifier.size(28.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            IconButton(
+                                onClick = {
+                                    val target = maxOf(0L, exoPlayer.currentPosition - 10000L)
+                                    exoPlayer.seekTo(target)
+                                    currentPositionMs = target
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Replay10,
+                                    contentDescription = "Replay 10s",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    val target = minOf(exoPlayer.duration, exoPlayer.currentPosition + 10000L)
+                                    exoPlayer.seekTo(target)
+                                    currentPositionMs = target
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Forward10,
+                                    contentDescription = "Forward 10s",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = onToggleFullscreen,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                    contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSubtitleSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showSubtitleSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF141418),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(38.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0xFF3F3F46))
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Subtitles",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(
+                        onClick = { showSubtitleSheet = false },
+                        modifier = Modifier.size(26.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E1E24))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Display Subtitles",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (isSubtitlesEnabled) "Captions visible" else "Captions hidden",
+                            color = TextMuted,
+                            fontSize = 11.5.sp
+                        )
+                    }
+
+                    Switch(
+                        checked = isSubtitlesEnabled,
+                        onCheckedChange = { isSubtitlesEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = LimeActive,
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color(0xFF27272A)
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "AVAILABLE SUBTITLE TRACKS",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val textTrackOptions = remember(exoPlayer.currentTracks) {
+                    val list = mutableListOf<Triple<Tracks.Group, Int, String>>()
+                    val groups = exoPlayer.currentTracks.groups
+                    for (g in groups) {
+                        if (g.type == C.TRACK_TYPE_TEXT) {
+                            for (i in 0 until g.length) {
+                                val fmt = g.getTrackFormat(i)
+                                val lang = fmt.language ?: ""
+                                val label = fmt.label ?: if (lang.isNotBlank()) lang.uppercase() else "English Track ${list.size + 1}"
+                                list.add(Triple(g, i, label))
+                            }
+                        }
+                    }
+                    list
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (!isSubtitlesEnabled) LimeActive.copy(alpha = 0.14f) else Color(0xFF1E1E24))
+                        .border(
+                            BorderStroke(1.dp, if (!isSubtitlesEnabled) LimeActive else Color(0xFF2A2A32)),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable {
+                            isSubtitlesEnabled = false
+                            selectedSubtitleTrackId = "off"
+                            showSubtitleSheet = false
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Off",
+                        color = if (!isSubtitlesEnabled) LimeActive else Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = if (!isSubtitlesEnabled) FontWeight.Bold else FontWeight.Medium
+                    )
+                    if (!isSubtitlesEnabled) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = LimeActive,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (textTrackOptions.isNotEmpty()) {
+                    textTrackOptions.forEach { (group, trackIdx, trackName) ->
+                        val isTrackActive = isSubtitlesEnabled && (selectedSubtitleTrackId == "$trackName-$trackIdx" || (selectedSubtitleTrackId == null && trackIdx == 0))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isTrackActive) LimeActive.copy(alpha = 0.14f) else Color(0xFF1E1E24))
+                                .border(
+                                    BorderStroke(1.dp, if (isTrackActive) LimeActive else Color(0xFF2A2A32)),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable {
+                                    isSubtitlesEnabled = true
+                                    selectedSubtitleTrackId = "$trackName-$trackIdx"
+                                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                        .buildUpon()
+                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                        .setOverrideForType(
+                                            TrackSelectionOverride(group.mediaTrackGroup, trackIdx)
+                                        )
+                                        .build()
+                                    showSubtitleSheet = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = trackName,
+                                color = if (isTrackActive) LimeActive else Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isTrackActive) FontWeight.Bold else FontWeight.Medium
+                            )
+                            if (isTrackActive) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = LimeActive,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSubtitlesEnabled) LimeActive.copy(alpha = 0.14f) else Color(0xFF1E1E24))
+                            .border(
+                                BorderStroke(1.dp, if (isSubtitlesEnabled) LimeActive else Color(0xFF2A2A32)),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                isSubtitlesEnabled = true
+                                showSubtitleSheet = false
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "English (Embedded Subtitle)",
+                            color = if (isSubtitlesEnabled) LimeActive else Color.White,
+                            fontSize = 13.5.sp,
+                            fontWeight = if (isSubtitlesEnabled) FontWeight.Bold else FontWeight.Medium
+                        )
+                        if (isSubtitlesEnabled) {
                             Icon(
-                                imageVector = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Selected",
+                                tint = LimeActive,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if (showSettingsSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF141418),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(38.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0xFF3F3F46))
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Playback Settings",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(
+                        onClick = { showSettingsSheet = false },
+                        modifier = Modifier.size(26.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "AUDIO & STREAMING SERVER",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val srvList = state.playbackInfo?.servers ?: emptyList()
+                if (srvList.isNotEmpty()) {
+                    srvList.forEach { srv ->
+                        val isSel = (srv.serverName == state.selectedServer?.serverName) &&
+                                srv.dataType.equals(state.selectedServer?.dataType, ignoreCase = true)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSel) LimeActive.copy(alpha = 0.14f) else Color(0xFF1E1E24))
+                                .border(
+                                    BorderStroke(1.dp, if (isSel) LimeActive else Color(0xFF2A2A32)),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable {
+                                    onSwitchServer(srv)
+                                    showSettingsSheet = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = srv.serverName,
+                                    color = if (isSel) LimeActive else Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "•",
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (srv.dataType.equals("dub", ignoreCase = true)) "English Dub" else "Japanese Sub",
+                                    color = if (isSel) LimeActive.copy(alpha = 0.9f) else TextSecondary,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            if (isSel) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = LimeActive,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                } else {
+                    Text("No alternate servers available", color = TextSecondary, fontSize = 12.sp)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "PLAYBACK SPEED",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+                    speeds.forEach { sp ->
+                        val isSel = (playbackSpeed == sp)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) LimeActive else Color(0xFF1E1E24))
+                                .border(
+                                    BorderStroke(1.dp, if (isSel) LimeActive else Color(0xFF2A2A32)),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clickable {
+                                    playbackSpeed = sp
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (sp == 1.0f) "1x" else "${sp}x",
+                                color = if (isSel) Color.Black else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDownloadSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showDownloadSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF141418),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(38.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0xFF3F3F46))
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Download Episode ${state.currentlyPlayingEpisode}",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(
+                        onClick = { showDownloadSheet = false },
+                        modifier = Modifier.size(26.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = details.displayTitle,
+                    color = TextMuted,
+                    fontSize = 12.5.sp
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                val currentEp = state.currentPlayingEpisodeObj ?: ReAnimeEpisode(
+                    episodeNumber = state.currentlyPlayingEpisode,
+                    title = "Episode ${state.currentlyPlayingEpisode}"
+                )
+
+                val availableStreams = state.playbackInfo?.directStreams ?: emptyList()
+
+                if (availableStreams.isNotEmpty()) {
+                    Text(
+                        text = "SELECT DOWNLOAD QUALITY",
+                        color = TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    availableStreams.forEach { st ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF1E1E24))
+                                .border(BorderStroke(1.dp, Color(0xFF2A2A32)), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    onDownloadEpisode(currentEp, st)
+                                    Toast.makeText(context, "Added EP ${currentEp.episodeNumber} to Library Downloads", Toast.LENGTH_SHORT).show()
+                                    showDownloadSheet = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = st.label.ifBlank { "${st.quality} (${st.format})" },
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = st.audioLangs ?: "Lossless direct stream",
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Download",
+                                tint = LimeActive,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                } else if (state.selectedStream != null) {
+                    val st = state.selectedStream
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E1E24))
+                            .border(BorderStroke(1.dp, Color(0xFF2A2A32)), RoundedCornerShape(10.dp))
+                            .clickable {
+                                onDownloadEpisode(currentEp, st)
+                                Toast.makeText(context, "Added EP ${currentEp.episodeNumber} to Library Downloads", Toast.LENGTH_SHORT).show()
+                                showDownloadSheet = false
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "${st.quality} (${st.format})",
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Lossless direct stream",
+                                color = TextMuted,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download",
+                            tint = LimeActive,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Direct download stream not available for this episode.",
+                            color = TextMuted,
+                            fontSize = 12.5.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Downloads can be tracked, paused, and played offline in Library > Downloads.",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
             }
         }
     }

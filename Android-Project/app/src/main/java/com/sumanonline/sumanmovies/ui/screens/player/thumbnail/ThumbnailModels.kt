@@ -20,3 +20,11 @@ data class ThumbnailSpriteCue(
 ) {
     fun contains(timeMs: Long): Boolean = timeMs in startMs until endMs
 }
+
+data class HlsSegmentEntry(
+    val startMs: Long,
+    val endMs: Long,
+    val segmentUrl: String
+) {
+    fun contains(timeMs: Long): Boolean = timeMs in startMs until endMs
+}

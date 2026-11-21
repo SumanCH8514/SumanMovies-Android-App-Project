@@ -2,6 +2,9 @@ package com.sumanonline.sumanmovies.ui.screens.reanime
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sumanonline.sumanmovies.data.models.Episode
+import com.sumanonline.sumanmovies.data.models.MediaItem
+import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.ReAnimeAnimeDetails
 import com.sumanonline.sumanmovies.data.models.ReAnimeEpisode
 import com.sumanonline.sumanmovies.data.models.ReAnimePlaybackInfo
@@ -257,6 +260,42 @@ class ReAnimeDetailsViewModel(
 
     fun toggleFillerOnly() {
         _uiState.value = _uiState.value.copy(showFillerOnly = !_uiState.value.showFillerOnly)
+    }
+
+    fun startDownload(
+        details: ReAnimeAnimeDetails,
+        episode: ReAnimeEpisode,
+        stream: StreamSource,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val mediaItem = MediaItem(
+                    id = "reanime:${details.slug.ifBlank { details.id }}",
+                    title = details.displayTitle,
+                    mediaType = MediaType.SERIES,
+                    posterUrl = details.posterUrl,
+                    backdropUrl = details.bannerUrl,
+                    year = details.year,
+                    provider = "reanime"
+                )
+                val ep = Episode(
+                    id = "${mediaItem.id}-S1E${episode.episodeNumber}",
+                    seasonNumber = 1,
+                    episodeNumber = episode.episodeNumber,
+                    title = episode.title,
+                    overview = "",
+                    stillUrl = episode.thumbnailUrl,
+                    airDate = episode.airedDate
+                )
+                repository.cacheItem(mediaItem)
+                repository.startDownload(mediaItem, stream, ep)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to start download")
+            }
+        }
     }
 
     fun refresh() {
