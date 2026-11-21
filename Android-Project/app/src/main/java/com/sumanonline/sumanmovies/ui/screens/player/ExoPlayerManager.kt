@@ -12,28 +12,32 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.extractor.DefaultExtractorsFactory
 import com.sumanonline.sumanmovies.SumanMoviesApp
+import com.sumanonline.sumanmovies.data.cache.PlayerCacheManager
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.util.DeviceCapabilities
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.util.ArrayList
 
 data class PlayerPlaybackState(
@@ -44,7 +48,10 @@ data class PlayerPlaybackState(
     val isBuffering: Boolean = true,
     val playbackSpeed: Float = 1.0f,
     val isEnded: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val recoveryMessage: String? = null,
+    val isSeekable: Boolean = true,
+    val isSeeking: Boolean = false
 )
 
 data class PlayerAudioTrack(
@@ -75,8 +82,15 @@ data class PlayerSubtitleTrack(
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class ExoPlayerManager(private val context: Context) {
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var exoPlayer: ExoPlayer? = null
     private var hasAttemptedAudioFallback: Boolean = false
+
+    private val recoveryEngine = PlaybackRecoveryEngine(managerScope, maxRetryAttempts = 3)
+    val recoveryStatus: StateFlow<RecoveryStatus> = recoveryEngine.status
+
+    val diagnostics = PlaybackDiagnostics()
+    val diagnosticsSummary: StateFlow<PlaybackDiagnosticsSummary> = diagnostics.summary
 
     private val _playbackState = MutableStateFlow(PlayerPlaybackState())
     val playbackState: StateFlow<PlayerPlaybackState> = _playbackState.asStateFlow()
@@ -91,6 +105,34 @@ class ExoPlayerManager(private val context: Context) {
     val isSubtitlesEnabled: StateFlow<Boolean> = _isSubtitlesEnabled.asStateFlow()
 
     private var activeStream: StreamSource? = null
+    private var activeSubtitles: List<SubtitleTrack> = emptyList()
+
+    init {
+        managerScope.launch {
+            recoveryEngine.status.collectLatest { status ->
+                when (status) {
+                    is RecoveryStatus.Reconnecting -> {
+                        _playbackState.value = _playbackState.value.copy(
+                            isBuffering = true,
+                            recoveryMessage = status.message
+                        )
+                    }
+                    is RecoveryStatus.Idle -> {
+                        if (_playbackState.value.recoveryMessage != null) {
+                            _playbackState.value = _playbackState.value.copy(recoveryMessage = null)
+                        }
+                    }
+                    is RecoveryStatus.Failed -> {
+                        _playbackState.value = _playbackState.value.copy(
+                            isBuffering = false,
+                            recoveryMessage = null,
+                            errorMessage = status.message
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     fun getPlayer(): ExoPlayer {
         if (exoPlayer == null) {
@@ -153,15 +195,16 @@ class ExoPlayerManager(private val context: Context) {
                         .setViewportSizeToPhysicalDisplaySize(this@ExoPlayerManager.context, true)
                 )
             }
+
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    15000,
                     30000,
-                    500,
-                    1000
+                    60000,
+                    1500,
+                    3000
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(10000, true)
+                .setBackBuffer(30000, true)
                 .build()
 
             exoPlayer = ExoPlayer.Builder(context, renderersFactory)
@@ -170,19 +213,41 @@ class ExoPlayerManager(private val context: Context) {
                 .setSeekForwardIncrementMs(10000)
                 .setSeekBackIncrementMs(10000)
                 .build().apply {
+                    addAnalyticsListener(diagnostics)
                     addListener(object : Player.Listener {
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
                             _playbackState.value = _playbackState.value.copy(isPlaying = isPlaying)
                         }
 
+                        override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                            val seekable = isCurrentMediaItemSeekable && isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                            _playbackState.value = _playbackState.value.copy(
+                                isSeekable = seekable,
+                                durationMs = duration.coerceAtLeast(0L)
+                            )
+                        }
+
+                        override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                            val seekable = isCurrentMediaItemSeekable && availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                            _playbackState.value = _playbackState.value.copy(isSeekable = seekable)
+                        }
+
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             val isBuffering = playbackState == Player.STATE_BUFFERING
                             val isEnded = playbackState == Player.STATE_ENDED
+                            val isReady = playbackState == Player.STATE_READY
+                            if (isReady) {
+                                recoveryEngine.markSuccess()
+                            }
+                            val seekable = isCurrentMediaItemSeekable && isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
                             _playbackState.value = _playbackState.value.copy(
                                 isBuffering = isBuffering,
                                 isEnded = isEnded,
+                                isSeekable = seekable,
+                                isSeeking = if (isReady) false else _playbackState.value.isSeeking,
                                 durationMs = duration.coerceAtLeast(0L),
-                                errorMessage = if (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) null else _playbackState.value.errorMessage
+                                errorMessage = if (isReady || isBuffering) null else _playbackState.value.errorMessage,
+                                recoveryMessage = if (isReady) null else _playbackState.value.recoveryMessage
                             )
                         }
 
@@ -216,9 +281,35 @@ class ExoPlayerManager(private val context: Context) {
                                 }
                             }
 
+                            if (recoveryEngine.isRetryable(error) && activeStream != null) {
+                                val currentPos = currentPosition.coerceAtLeast(0L)
+                                val playWhenReadyState = playWhenReady
+                                diagnostics.recordRetryAttempt()
+                                recoveryEngine.scheduleRetry(
+                                    error = error,
+                                    currentPositionMs = currentPos,
+                                    playWhenReady = playWhenReadyState,
+                                    onExecuteRetry = { savedPos, shouldPlay ->
+                                        activeStream?.let { stream ->
+                                            prepareStream(stream, activeSubtitles, savedPos, shouldPlay)
+                                        }
+                                    },
+                                    onExhausted = { finalReason ->
+                                        val formatted = formatUserPlaybackError(error)
+                                        _playbackState.value = _playbackState.value.copy(
+                                            isBuffering = false,
+                                            recoveryMessage = null,
+                                            errorMessage = formatted.ifBlank { finalReason }
+                                        )
+                                    }
+                                )
+                                return
+                            }
+
                             val userMsg = formatUserPlaybackError(error)
                             _playbackState.value = _playbackState.value.copy(
                                 isBuffering = false,
+                                recoveryMessage = null,
                                 errorMessage = userMsg
                             )
                         }
@@ -290,7 +381,11 @@ class ExoPlayerManager(private val context: Context) {
     }
 
     fun clearError() {
-        _playbackState.value = _playbackState.value.copy(errorMessage = null)
+        recoveryEngine.cancel()
+        _playbackState.value = _playbackState.value.copy(
+            errorMessage = null,
+            recoveryMessage = null
+        )
     }
 
     private fun extractAudioTracks(tracks: Tracks) {
@@ -767,15 +862,20 @@ class ExoPlayerManager(private val context: Context) {
     fun prepareStream(
         stream: StreamSource,
         subtitles: List<SubtitleTrack> = emptyList(),
-        startPositionMs: Long = 0L
+        startPositionMs: Long = 0L,
+        playWhenReady: Boolean = true
     ) {
         activeStream = stream
+        activeSubtitles = subtitles
         hasAttemptedAudioFallback = false
         val player = getPlayer()
         _audioTracks.value = emptyList()
 
+        diagnostics.resetSession()
+
         _playbackState.value = _playbackState.value.copy(
             errorMessage = null,
+            recoveryMessage = null,
             isBuffering = true,
             currentPositionMs = startPositionMs.coerceAtLeast(0L),
             durationMs = 0L,
@@ -894,88 +994,16 @@ class ExoPlayerManager(private val context: Context) {
         player.setMediaSource(mediaSource, true)
         player.seekTo(startPositionMs.coerceAtLeast(0L))
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = playWhenReady
     }
 
     private fun createMediaSource(
         stream: StreamSource,
         subtitles: List<SubtitleTrack> = emptyList()
     ): MediaSource {
-        val defaultUa = stream.headers["User-Agent"]
-            ?: if (stream.provider == "moviebox") {
-                "com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G)"
-            } else {
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
-            }
-
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(defaultUa)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(25000)
-            .setReadTimeoutMs(30000)
-
-        val headers = stream.headers.toMutableMap()
-        if (!headers.containsKey("User-Agent")) {
-            headers["User-Agent"] = defaultUa
-        }
-        if (!headers.containsKey("Accept")) {
-            headers["Accept"] = "*/*"
-        }
-        if (!headers.containsKey("Accept-Encoding")) {
-            headers["Accept-Encoding"] = "identity"
-        }
-        if (!headers.containsKey("Connection")) {
-            headers["Connection"] = "keep-alive"
-        }
-
-        val uriHost = try {
-            android.net.Uri.parse(stream.url).host?.lowercase() ?: ""
-        } catch (_: Exception) {
-            ""
-        }
-        val isDirectCdn = uriHost.contains("pixeldrain") ||
-                uriHost.contains("googleusercontent") ||
-                uriHost.contains("r2.cloudflarestorage") ||
-                uriHost.contains("r2.dev") ||
-                uriHost.contains("workers.dev") ||
-                uriHost.contains("drive.google.com") ||
-                uriHost.contains("video-gen.xyz") ||
-                uriHost.contains("driveseed.org") ||
-                uriHost.contains("fastdl") ||
-                uriHost.contains("10gbps") ||
-                uriHost.contains("stream") ||
-                uriHost.contains("workers") ||
-                stream.provider == "moviesleech"
-
-        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub" || stream.provider == "moviesleech") {
-            val referer = headers["Referer"]
-            if (referer != null) {
-                val refererHost = try {
-                    android.net.Uri.parse(referer).host?.lowercase() ?: ""
-                } catch (_: Exception) {
-                    ""
-                }
-                if (uriHost.isBlank() || refererHost.isBlank() || !uriHost.endsWith(refererHost)) {
-                    headers.remove("Referer")
-                }
-            }
-        }
-
-        if (stream.provider == "moviebox" && !headers.containsKey("Referer")) {
-            if (stream.format.equals("DASH", ignoreCase = true) || stream.url.contains(".mpd")) {
-                headers["Referer"] = "https://sportslive.wine"
-            }
-        }
-        val cookie = headers["Cookie"]
-        val edgeCookie = headers["Edge-Cache-Cookie"]
-        if (cookie != null && edgeCookie == null && cookie.contains("Edge-Cache-Cookie=")) {
-            headers["Edge-Cache-Cookie"] = cookie.substringAfter("Edge-Cache-Cookie=").substringBefore(";")
-        } else if (edgeCookie != null && cookie == null) {
-            headers["Cookie"] = if (edgeCookie.startsWith("Edge-Cache-Cookie=")) edgeCookie else "Edge-Cache-Cookie=$edgeCookie"
-        }
-        httpDataSourceFactory.setDefaultRequestProperties(headers)
-
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+        val httpDataSourceFactory = PlaybackNetworkConfig.buildHttpDataSourceFactory(stream)
+        val cacheDataSourceFactory = PlayerCacheManager.buildCacheDataSourceFactory(context, httpDataSourceFactory)
+        val dataSourceFactory = DefaultDataSource.Factory(context, cacheDataSourceFactory)
 
         val extractorsFactory = DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
@@ -1002,8 +1030,12 @@ class ExoPlayerManager(private val context: Context) {
                 .build()
         }
 
+        val uri = android.net.Uri.parse(stream.url)
+        val customCacheKey = PlayerCacheManager.generateCacheKey(uri)
+
         val mediaItem = MediaItem.Builder()
-            .setUri(stream.url)
+            .setUri(uri)
+            .setCustomCacheKey(customCacheKey)
             .apply {
                 if (mimeType != null) setMimeType(mimeType)
                 if (subtitleConfigs.isNotEmpty()) setSubtitleConfigurations(subtitleConfigs)
@@ -1038,29 +1070,60 @@ class ExoPlayerManager(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
+        val player = exoPlayer ?: return
+        if (!player.isCurrentMediaItemSeekable || !player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) {
+            return
+        }
+        val duration = player.duration
+        val target = if (duration > 0L) {
+            positionMs.coerceIn(0L, duration)
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
+        _playbackState.value = _playbackState.value.copy(
+            isSeeking = true,
+            isBuffering = true,
+            currentPositionMs = target
+        )
+        player.seekTo(target)
     }
 
     fun skipForward(seconds: Int = 0) {
+        val player = exoPlayer ?: return
+        if (!player.isCurrentMediaItemSeekable || !player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) {
+            return
+        }
         val step = if (seconds > 0) seconds else try {
             (context.applicationContext as? SumanMoviesApp)?.preferencesManager?.doubleTapSeekDuration?.value ?: 10
         } catch (_: Exception) { 10 }
-        exoPlayer?.let { p ->
-            val target = p.currentPosition + (step * 1000L)
-            val dur = p.duration
-            val maxPos = if (dur > 0L) dur else Long.MAX_VALUE
-            p.seekTo(target.coerceAtMost(maxPos))
-        }
+        val target = player.currentPosition + (step * 1000L)
+        val dur = player.duration
+        val maxPos = if (dur > 0L) dur else Long.MAX_VALUE
+        val finalPos = target.coerceAtMost(maxPos)
+        _playbackState.value = _playbackState.value.copy(
+            isSeeking = true,
+            isBuffering = true,
+            currentPositionMs = finalPos
+        )
+        player.seekTo(finalPos)
     }
 
     fun skipBackward(seconds: Int = 0) {
+        val player = exoPlayer ?: return
+        if (!player.isCurrentMediaItemSeekable || !player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) {
+            return
+        }
         val step = if (seconds > 0) seconds else try {
             (context.applicationContext as? SumanMoviesApp)?.preferencesManager?.doubleTapSeekDuration?.value ?: 10
         } catch (_: Exception) { 10 }
-        exoPlayer?.let { p ->
-            val target = p.currentPosition - (step * 1000L)
-            p.seekTo(target.coerceAtLeast(0L))
-        }
+        val target = player.currentPosition - (step * 1000L)
+        val finalPos = target.coerceAtLeast(0L)
+        _playbackState.value = _playbackState.value.copy(
+            isSeeking = true,
+            isBuffering = true,
+            currentPositionMs = finalPos
+        )
+        player.seekTo(finalPos)
     }
 
     fun setSpeed(speed: Float) {
@@ -1088,6 +1151,7 @@ class ExoPlayerManager(private val context: Context) {
 
     fun resetPlayback() {
         activeStream = null
+        recoveryEngine.cancel()
         exoPlayer?.pause()
         exoPlayer?.seekTo(0L)
         exoPlayer?.clearMediaItems()
@@ -1096,11 +1160,18 @@ class ExoPlayerManager(private val context: Context) {
             durationMs = 0L,
             bufferedPositionMs = 0L,
             isBuffering = true,
-            isPlaying = false
+            isPlaying = false,
+            errorMessage = null,
+            recoveryMessage = null,
+            isSeeking = false,
+            isSeekable = true
         )
     }
 
     fun release() {
+        recoveryEngine.cancel()
+        managerScope.cancel()
+        exoPlayer?.removeAnalyticsListener(diagnostics)
         exoPlayer?.release()
         exoPlayer = null
     }

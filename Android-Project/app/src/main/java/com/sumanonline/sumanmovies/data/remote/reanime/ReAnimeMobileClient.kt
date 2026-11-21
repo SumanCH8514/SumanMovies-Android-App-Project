@@ -7,6 +7,11 @@ import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaDetails
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.data.models.ReAnimeAnimeDetails
+import com.sumanonline.sumanmovies.data.models.ReAnimeEpisode
+import com.sumanonline.sumanmovies.data.models.ReAnimePlaybackInfo
+import com.sumanonline.sumanmovies.data.models.ReAnimeSeasonRelation
+import com.sumanonline.sumanmovies.data.models.ReAnimeServerOption
 import com.sumanonline.sumanmovies.data.models.Season
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
@@ -168,6 +173,475 @@ class ReAnimeMobileClient {
         } catch (_: Exception) {
             null
         }
+    }
+
+    suspend fun fetchAnimeDetails(idOrSlug: String, explicitAnilistId: Int? = null): ReAnimeAnimeDetails? = withContext(Dispatchers.IO) {
+        val cleanId = idOrSlug.removePrefix("reanime:").trim()
+        val parts = cleanId.split(":")
+        var anilistId = explicitAnilistId ?: (if (parts.size >= 2) parts[0].toIntOrNull() else cleanId.toIntOrNull())
+        var slug = if (parts.size >= 2) parts[1] else if (anilistId == null) cleanId else ""
+
+        var watchEpisodes = emptyList<ReAnimeEpisode>()
+        if (slug.isNotBlank()) {
+            val meta = fetchReAnimeWatchMeta(slug)
+            if (anilistId == null && meta.first != null) {
+                anilistId = meta.first
+            }
+            watchEpisodes = meta.second
+        }
+
+        val cleanQuerySlug = slug.replace(Regex("""-[a-z0-9]{5,8}$"""), "").replace("-", " ").trim()
+        val anilistJson = fetchAniListFullMedia(
+            anilistId,
+            if (anilistId == null && cleanQuerySlug.isNotBlank()) cleanQuerySlug else null
+        )
+        val mediaObj = anilistJson?.getAsJsonObject("data")?.getAsJsonObject("Media")
+
+        if (anilistId == null && mediaObj != null) {
+            anilistId = mediaObj.get("id")?.takeIf { !it.isJsonNull }?.asInt
+        }
+
+        val titleObj = mediaObj?.getAsJsonObject("title")
+        val engTitle = titleObj?.get("english")?.takeIf { !it.isJsonNull }?.asString ?: ""
+        val romajiTitle = titleObj?.get("romaji")?.takeIf { !it.isJsonNull }?.asString ?: ""
+        val nativeTitle = titleObj?.get("native")?.takeIf { !it.isJsonNull }?.asString ?: ""
+        val userPrefTitle = titleObj?.get("userPreferred")?.takeIf { !it.isJsonNull }?.asString ?: ""
+
+        val banner = mediaObj?.get("bannerImage")?.takeIf { !it.isJsonNull }?.asString
+        val coverObj = mediaObj?.getAsJsonObject("coverImage")
+        val poster = coverObj?.get("extraLarge")?.takeIf { !it.isJsonNull }?.asString
+            ?: coverObj?.get("large")?.takeIf { !it.isJsonNull }?.asString
+            ?: coverObj?.get("medium")?.takeIf { !it.isJsonNull }?.asString
+
+        val fmt = mediaObj?.get("format")?.takeIf { !it.isJsonNull }?.asString ?: "TV"
+        val stat = mediaObj?.get("status")?.takeIf { !it.isJsonNull }?.asString ?: "Finished"
+        val yr = mediaObj?.get("seasonYear")?.takeIf { !it.isJsonNull }?.asInt?.toString()
+        val sSeason = mediaObj?.get("season")?.takeIf { !it.isJsonNull }?.asString
+        val epsTotal = mediaObj?.get("episodes")?.takeIf { !it.isJsonNull }?.asInt
+            ?: mediaObj?.getAsJsonObject("nextAiringEpisode")?.get("episode")?.takeIf { !it.isJsonNull }?.asInt?.minus(1)
+            ?: 1
+        val dur = mediaObj?.get("duration")?.takeIf { !it.isJsonNull }?.asInt?.let { "${it}m" }
+        val sc = mediaObj?.get("averageScore")?.takeIf { !it.isJsonNull }?.asFloat?.let { it / 10f }
+        val desc = mediaObj?.get("description")?.takeIf { !it.isJsonNull }?.asString
+            ?.replace("\\n", "\n")?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")?.trim()
+
+        val genresList = mutableListOf<String>()
+        mediaObj?.getAsJsonArray("genres")?.forEach { g ->
+            if (!g.isJsonNull && g.isJsonPrimitive) genresList.add(g.asString)
+        }
+
+        val studioName = mediaObj?.getAsJsonObject("studios")
+            ?.getAsJsonArray("nodes")?.firstOrNull()?.asJsonObject
+            ?.get("name")?.takeIf { !it.isJsonNull }?.asString
+
+        val streamingMap = mutableMapOf<Int, Pair<String, String>>()
+        val streamingArr = mediaObj?.getAsJsonArray("streamingEpisodes")
+        if (streamingArr != null) {
+            for (elem in streamingArr) {
+                if (!elem.isJsonObject) continue
+                val sObj = elem.asJsonObject
+                val sTitle = sObj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                val sThumb = sObj.get("thumbnail")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                val match = Regex("""(?:Episode|Ep\.?)\s*(\d+)""", RegexOption.IGNORE_CASE).find(sTitle)
+                val epNum = match?.groupValues?.get(1)?.toIntOrNull()
+                if (epNum != null) {
+                    val cleanT = sTitle.replace(Regex("""^(?:Episode|Ep\.?)\s*\d+\s*[-:]?\s*""", RegexOption.IGNORE_CASE), "").trim()
+                    streamingMap[epNum] = Pair(if (cleanT.isNotBlank()) cleanT else sTitle, sThumb)
+                }
+            }
+        }
+
+        val relationsList = mutableListOf<ReAnimeSeasonRelation>()
+        val relEdges = mediaObj?.getAsJsonObject("relations")?.getAsJsonArray("edges")
+        if (relEdges != null) {
+            for (elem in relEdges) {
+                if (!elem.isJsonObject) continue
+                val edge = elem.asJsonObject
+                val rType = edge.get("relationType")?.takeIf { !it.isJsonNull }?.asString ?: "RELATED"
+                val node = edge.getAsJsonObject("node") ?: continue
+                val nType = node.get("type")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                if (!nType.equals("ANIME", ignoreCase = true)) continue
+
+                val rId = node.get("id")?.asInt ?: continue
+                val rTitleObj = node.getAsJsonObject("title")
+                val rTitle = rTitleObj?.get("english")?.takeIf { !it.isJsonNull }?.asString
+                    ?: rTitleObj?.get("userPreferred")?.takeIf { !it.isJsonNull }?.asString
+                    ?: rTitleObj?.get("romaji")?.takeIf { !it.isJsonNull }?.asString
+                    ?: "Anime #$rId"
+
+                val rFormat = node.get("format")?.takeIf { !it.isJsonNull }?.asString
+                val rYear = node.get("seasonYear")?.takeIf { !it.isJsonNull }?.asInt?.toString()
+                val rCover = node.getAsJsonObject("coverImage")?.get("large")?.takeIf { !it.isJsonNull }?.asString
+                val rEps = node.get("episodes")?.takeIf { !it.isJsonNull }?.asInt
+
+                relationsList.add(
+                    ReAnimeSeasonRelation(
+                        id = "reanime:$rId",
+                        anilistId = rId,
+                        title = rTitle,
+                        relationType = rType,
+                        format = rFormat,
+                        year = rYear,
+                        coverUrl = rCover,
+                        episodesCount = rEps
+                    )
+                )
+            }
+        }
+
+        var reanimeEpisodes: List<ReAnimeEpisode> = watchEpisodes
+        if (reanimeEpisodes.isEmpty() && anilistId != null) {
+            val queriedSlug = findReAnimeSlugByAnilistId(anilistId)
+            if (!queriedSlug.isNullOrBlank()) {
+                slug = queriedSlug
+                reanimeEpisodes = fetchReAnimeWatchEpisodes(slug)
+            }
+        }
+
+        val finalEpisodes = mutableListOf<ReAnimeEpisode>()
+        if (reanimeEpisodes.isNotEmpty()) {
+            for (ep in reanimeEpisodes) {
+                val streamInfo = streamingMap[ep.episodeNumber]
+                val resolvedTitle = if (ep.title.isNotBlank() && !ep.title.startsWith("Episode ", ignoreCase = true)) {
+                    ep.title
+                } else {
+                    streamInfo?.first ?: ep.title
+                }
+                val resolvedThumb = streamInfo?.second ?: ep.thumbnailUrl ?: banner ?: poster
+                finalEpisodes.add(
+                    ep.copy(
+                        title = resolvedTitle.ifBlank { "Episode ${ep.episodeNumber}" },
+                        thumbnailUrl = resolvedThumb
+                    )
+                )
+            }
+        } else {
+            val count = maxOf(epsTotal, streamingMap.keys.maxOrNull() ?: 1)
+            for (i in 1..count) {
+                val streamInfo = streamingMap[i]
+                finalEpisodes.add(
+                    ReAnimeEpisode(
+                        episodeNumber = i,
+                        title = streamInfo?.first ?: "Episode $i",
+                        thumbnailUrl = streamInfo?.second ?: banner ?: poster,
+                        isFiller = false,
+                        isSubbed = true,
+                        isDubbed = false
+                    )
+                )
+            }
+        }
+
+        val fallbackTitle = cleanQuerySlug.split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+            .ifBlank { "Anime" }
+        val effectiveTitleEng = engTitle.ifBlank { userPrefTitle.ifBlank { romajiTitle.ifBlank { fallbackTitle } } }
+        val effectiveTitleRom = romajiTitle.ifBlank { userPrefTitle }
+
+        ReAnimeAnimeDetails(
+            id = idOrSlug,
+            anilistId = anilistId,
+            slug = slug,
+            titleEnglish = effectiveTitleEng,
+            titleRomaji = effectiveTitleRom,
+            titleNative = nativeTitle,
+            bannerUrl = banner,
+            posterUrl = poster,
+            format = fmt,
+            status = stat,
+            year = yr,
+            season = sSeason,
+            episodesTotal = maxOf(finalEpisodes.size, epsTotal),
+            duration = dur,
+            score = sc,
+            description = desc,
+            genres = genresList,
+            studios = studioName,
+            episodes = finalEpisodes,
+            seasons = relationsList
+        )
+    }
+
+    private fun fetchAniListFullMedia(anilistId: Int?, queryText: String?): JsonObject? {
+        val q = """
+            query (${'$'}id: Int, ${'$'}search: String) {
+              Media (id: ${'$'}id, search: ${'$'}search, type: ANIME) {
+                id
+                idMal
+                title {
+                  english
+                  romaji
+                  native
+                  userPreferred
+                }
+                format
+                status
+                description(asHtml: false)
+                startDate { year month day }
+                endDate { year month day }
+                season
+                seasonYear
+                episodes
+                duration
+                genres
+                averageScore
+                bannerImage
+                coverImage {
+                  extraLarge
+                  large
+                  medium
+                  color
+                }
+                studios(isMain: true) {
+                  nodes { name }
+                }
+                nextAiringEpisode {
+                  episode
+                  airingAt
+                }
+                relations {
+                  edges {
+                    relationType
+                    node {
+                      id
+                      title { english romaji userPreferred }
+                      format
+                      type
+                      status
+                      seasonYear
+                      coverImage { large }
+                      episodes
+                    }
+                  }
+                }
+                streamingEpisodes {
+                  title
+                  thumbnail
+                  url
+                  site
+                }
+              }
+            }
+        """.trimIndent()
+
+        val payload = JsonObject().apply {
+            addProperty("query", q)
+            val vars = JsonObject()
+            if (anilistId != null && anilistId > 0) {
+                vars.addProperty("id", anilistId)
+            } else if (!queryText.isNullOrBlank()) {
+                vars.addProperty("search", queryText.trim())
+            }
+            add("variables", vars)
+        }.toString()
+
+        val body = payload.toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("https://graphql.anilist.co")
+            .post(body)
+            .header("User-Agent", mobileUserAgent)
+            .build()
+
+        return try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val str = resp.body?.string() ?: return null
+                JsonParser.parseString(str).asJsonObject
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchReAnimeWatchMeta(slug: String): Pair<Int?, List<ReAnimeEpisode>> {
+        val list = mutableListOf<ReAnimeEpisode>()
+        var foundAnilistId: Int? = null
+        for (mirror in mirrors) {
+            try {
+                val url = "$mirror/watch/$slug/__data.json"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", mobileUserAgent)
+                    .header("Referer", "$mirror/")
+                    .build()
+
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val str = resp.body?.string() ?: return@use
+                    val root = JsonParser.parseString(str).asJsonObject
+                    val nodes = root.getAsJsonArray("nodes") ?: return@use
+                    for (nodeElem in nodes) {
+                        if (!nodeElem.isJsonObject) continue
+                        val nodeObj = nodeElem.asJsonObject
+                        val dataArr = nodeObj.getAsJsonArray("data") ?: continue
+                        if (dataArr.size() == 0) continue
+
+                        if (foundAnilistId == null) {
+                            for (elem in dataArr) {
+                                if (!elem.isJsonObject) continue
+                                val obj = elem.asJsonObject
+                                if (obj.has("anilist_id")) {
+                                    val anilistIdx = obj.get("anilist_id")?.takeIf { it.isJsonPrimitive }?.asInt
+                                    if (anilistIdx != null && anilistIdx in 0 until dataArr.size()) {
+                                        val candidate = dataArr.get(anilistIdx).takeIf { it.isJsonPrimitive }?.asInt
+                                        if (candidate != null && candidate > 0) {
+                                            foundAnilistId = candidate
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (list.isEmpty()) {
+                            val rootObj = dataArr.get(0).takeIf { it.isJsonObject }?.asJsonObject
+                            val epArrayIdx = rootObj?.get("episodes")?.takeIf { it.isJsonPrimitive }?.asInt
+                            if (epArrayIdx != null && epArrayIdx in 0 until dataArr.size()) {
+                                val epIndices = dataArr.get(epArrayIdx).takeIf { it.isJsonArray }?.asJsonArray
+                                if (epIndices != null) {
+                                    for (i in 0 until epIndices.size()) {
+                                        val idx = epIndices.get(i).asInt
+                                        if (idx !in 0 until dataArr.size()) continue
+                                        val epObj = dataArr.get(idx).asJsonObject
+                                        val epNumIdx = epObj.get("episode_number")?.asInt ?: epObj.get("number")?.asInt
+                                        val num = if (epNumIdx != null && epNumIdx in 0 until dataArr.size()) {
+                                            dataArr.get(epNumIdx).takeIf { it.isJsonPrimitive }?.asInt ?: (i + 1)
+                                        } else (i + 1)
+
+                                        val titleIdx = epObj.get("title")?.asInt
+                                        val t = if (titleIdx != null && titleIdx in 0 until dataArr.size()) {
+                                            dataArr.get(titleIdx).takeIf { it.isJsonPrimitive }?.asString ?: "Episode $num"
+                                        } else "Episode $num"
+
+                                        val fillerIdx = epObj.get("is_filler")?.asInt ?: epObj.get("filler")?.asInt
+                                        val isFiller = if (fillerIdx != null && fillerIdx in 0 until dataArr.size()) {
+                                            dataArr.get(fillerIdx).takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+                                        } else false
+
+                                        val subbedIdx = epObj.get("subbed")?.asInt
+                                        val isSubbed = if (subbedIdx != null && subbedIdx in 0 until dataArr.size()) {
+                                            dataArr.get(subbedIdx).takeIf { it.isJsonPrimitive }?.asBoolean ?: true
+                                        } else true
+
+                                        val dubbedIdx = epObj.get("dubbed")?.asInt
+                                        val isDubbed = if (dubbedIdx != null && dubbedIdx in 0 until dataArr.size()) {
+                                            dataArr.get(dubbedIdx).takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+                                        } else false
+
+                                        val airedIdx = epObj.get("aired")?.asInt
+                                        val airedStr = if (airedIdx != null && airedIdx in 0 until dataArr.size()) {
+                                            dataArr.get(airedIdx).takeIf { it.isJsonPrimitive }?.asString
+                                        } else null
+
+                                        list.add(
+                                            ReAnimeEpisode(
+                                                episodeNumber = num,
+                                                title = t,
+                                                isFiller = isFiller,
+                                                isSubbed = isSubbed,
+                                                isDubbed = isDubbed,
+                                                airedDate = airedStr
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (list.isNotEmpty() || foundAnilistId != null) return Pair(foundAnilistId, list)
+                }
+            } catch (_: Exception) {}
+        }
+        return Pair(foundAnilistId, list)
+    }
+
+    private fun fetchReAnimeWatchEpisodes(slug: String): List<ReAnimeEpisode> {
+        return fetchReAnimeWatchMeta(slug).second
+    }
+
+    suspend fun resolveEpisodePlayback(
+        anilistId: Int?,
+        slug: String?,
+        episodeNumber: Int
+    ): ReAnimePlaybackInfo = withContext(Dispatchers.IO) {
+        var resolvedAnilistId = anilistId
+        if (resolvedAnilistId == null && !slug.isNullOrBlank()) {
+            val meta = fetchReAnimeWatchMeta(slug)
+            resolvedAnilistId = meta.first
+            if (resolvedAnilistId == null) {
+                val cleanTitle = slug.replace(Regex("""-[a-z0-9]{5,8}$"""), "").replace("-", " ")
+                resolvedAnilistId = resolveAniListId(cleanTitle, null, 1, false)
+            }
+        }
+
+        if (resolvedAnilistId == null) {
+            return@withContext ReAnimePlaybackInfo(episodeNumber = episodeNumber)
+        }
+
+        val flixServers = fetchFlixServers(resolvedAnilistId, episodeNumber)
+        val serverOptions = mutableListOf<ReAnimeServerOption>()
+        for (srv in flixServers) {
+            val link = srv.dataLink ?: continue
+            val accessId = if (link.contains("/e/")) {
+                link.substringAfter("/e/").substringBefore("?")
+            } else {
+                link.substringBefore("?")
+            }
+            if (accessId.isBlank()) continue
+            serverOptions.add(
+                ReAnimeServerOption(
+                    serverName = srv.serverName ?: "HD-1",
+                    dataType = srv.dataType ?: "sub",
+                    embedUrl = link,
+                    accessId = accessId
+                )
+            )
+        }
+
+        val primaryServer = serverOptions.firstOrNull { it.dataType.equals("sub", ignoreCase = true) }
+            ?: serverOptions.firstOrNull()
+
+        val directStreams = mutableListOf<StreamSource>()
+        if (primaryServer != null) {
+            val isDub = primaryServer.dataType.equals("dub", ignoreCase = true)
+            val resolved = resolveFlixDirectMkv(primaryServer.accessId, isDub)
+            directStreams.addAll(resolved)
+        }
+
+        ReAnimePlaybackInfo(
+            episodeNumber = episodeNumber,
+            servers = serverOptions,
+            selectedServer = primaryServer,
+            embedUrl = primaryServer?.embedUrl,
+            directStreams = directStreams,
+            selectedStream = directStreams.firstOrNull()
+        )
+    }
+
+    suspend fun resolveDirectStreamsForServer(server: ReAnimeServerOption): List<StreamSource> = withContext(Dispatchers.IO) {
+        val isDub = server.dataType.equals("dub", ignoreCase = true)
+        resolveFlixDirectMkv(server.accessId, isDub)
+    }
+
+    private fun findReAnimeSlugByAnilistId(anilistId: Int): String? {
+        for (mirror in mirrors) {
+            try {
+                val url = "$mirror/"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", mobileUserAgent)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val html = resp.body?.string() ?: return@use
+                    val regex = Regex("""\{anime_id:"([^"]+)"[^}]*?anilist_id:$anilistId\b""")
+                    val m = regex.find(html)
+                    if (m != null) return m.groupValues[1]
+                }
+            } catch (_: Exception) {}
+        }
+        return null
     }
 
     private fun parseAnimeHtml(html: String): List<MediaItem> {

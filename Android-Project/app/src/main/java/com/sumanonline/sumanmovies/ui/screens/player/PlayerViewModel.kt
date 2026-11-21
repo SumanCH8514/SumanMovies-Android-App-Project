@@ -18,6 +18,9 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.StreamMirror
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.ui.screens.player.thumbnail.ThumbnailFrame
+import com.sumanonline.sumanmovies.ui.screens.player.thumbnail.ThumbnailPreviewManager
+import com.sumanonline.sumanmovies.ui.screens.player.thumbnail.ThumbnailRepository
 import com.sumanonline.sumanmovies.util.StreamHealthValidator
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +83,7 @@ data class PlayerUiState(
     val isStreamsDrawerOpen: Boolean = false,
     val failedStreamUrls: Set<String> = emptySet(),
     val playbackErrorMessage: String? = null,
+    val recoveryMessage: String? = null,
     val pendingFallbackStream: StreamSource? = null,
     val resolvingStreamUrl: String? = null,
     val isLoadingStreams: Boolean = false,
@@ -113,6 +117,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val playerManager = ExoPlayerManager(application)
     private val app = application as SumanMoviesApp
     private val repository = app.mediaRepository
+    private val connectivityObserver = NetworkConnectivityObserver(application)
+    val thumbnailRepository = ThumbnailRepository(application)
+    val thumbnailPreviewManager = ThumbnailPreviewManager(viewModelScope, thumbnailRepository)
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -218,6 +225,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         observeAudioTracks()
         observeSubtitleTracks()
         observeSkipPreferences()
+        observeConnectivity()
     }
 
     private fun observeSkipPreferences() {
@@ -229,6 +237,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             app.preferencesManager.autoSkipCredits.collectLatest { autoCredits ->
                 _uiState.value = _uiState.value.copy(autoSkipCredits = autoCredits)
+            }
+        }
+    }
+
+    private fun observeConnectivity() {
+        connectivityObserver.startObserving()
+        viewModelScope.launch {
+            var hadNetworkLoss = false
+            connectivityObserver.status.collectLatest { netStatus ->
+                when (netStatus) {
+                    NetworkStatus.LOST, NetworkStatus.UNAVAILABLE -> {
+                        hadNetworkLoss = true
+                    }
+                    NetworkStatus.AVAILABLE -> {
+                        if (hadNetworkLoss) {
+                            hadNetworkLoss = false
+                            val pState = playerManager.playbackState.value
+                            val curStream = _uiState.value.currentStream
+                            if (curStream != null && (pState.errorMessage != null || (pState.isBuffering && !pState.isPlaying))) {
+                                val resumePos = pState.currentPositionMs
+                                playerManager.clearError()
+                                playerManager.prepareStream(curStream, _serverSubtitles.value, resumePos, pState.isPlaying)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -349,10 +383,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if ((state.isPlaying || state.durationMs > 0) && !state.isBuffering && _uiState.value.loadingStageText != null) {
                     _uiState.value = _uiState.value.copy(loadingStageText = null)
                 }
+                if (_uiState.value.recoveryMessage != state.recoveryMessage) {
+                    _uiState.value = _uiState.value.copy(recoveryMessage = state.recoveryMessage)
+                }
                 val error = state.errorMessage
                 val current = _uiState.value.currentStream
 
-                if (error != null && current != null) {
+                if (error != null && current != null && state.recoveryMessage == null) {
                     val streamKey = "${current.url}#${current.quality}#${current.format}"
                     if (error == lastHandledError && streamKey == lastHandledStreamKey) {
                         return@collectLatest
@@ -481,13 +518,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (!s.isLoadingStreams && s.resolvingStreamUrl == null && s.pendingFallbackStream == null) {
                     playerManager.updatePosition()
                     val current = playerManager.playbackState.value
-                    if (current.isBuffering && current.currentPositionMs <= 500L && s.currentStream != null && s.playbackErrorMessage == null) {
+                    if (current.isBuffering && current.currentPositionMs <= 500L && s.currentStream != null && s.playbackErrorMessage == null && !current.isSeeking) {
                         bufferingStallTicks++
                         if (bufferingStallTicks >= 16) {
                             bufferingStallTicks = 0
                             triggerAutoFallback(s.currentStream, "Stream buffering timed out (stalled)")
                         }
-                    } else if (!current.isBuffering || current.currentPositionMs > 500L) {
+                    } else if (!current.isBuffering || current.currentPositionMs > 500L || current.isSeeking) {
                         bufferingStallTicks = 0
                     }
                     if (current.durationMs > 0 && current.currentPositionMs > 0) {
@@ -792,8 +829,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _serverSubtitles.value = resolvedState.subtitles
                 _serverSubtitlesCache[serverEnum] = resolvedState.subtitles
                 val cur = _uiState.value.currentStream
-                if (cur != null) {
-                    val pos = playerManager.playbackState.value.currentPositionMs
+                val currentPlayback = playerManager.playbackState.value
+                val isActivelyPlaying = currentPlayback.isPlaying || currentPlayback.currentPositionMs > 1000L || currentPlayback.isSeeking
+                if (cur != null && !isActivelyPlaying && initialSubtitles.isEmpty()) {
+                    val pos = currentPlayback.currentPositionMs
                     playerManager.prepareStream(cur, resolvedState.subtitles, pos)
                 }
             }
@@ -1681,8 +1720,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun requestSeekPreview(targetMs: Long) {
+        val s = _uiState.value
+        val cur = s.currentStream
+        thumbnailPreviewManager.requestPreview(
+            timestampMs = targetMs,
+            mediaId = s.mediaId,
+            streamUrl = cur?.url,
+            headers = cur?.headers ?: emptyMap(),
+            posterUrl = s.episodeStillUrl ?: s.posterUrl
+        )
+    }
+
+    fun clearSeekPreview() {
+        thumbnailPreviewManager.clearPreview()
+    }
+
     override fun onCleared() {
         super.onCleared()
+        thumbnailPreviewManager.clearPreview()
+        connectivityObserver.stopObserving()
         playerManager.release()
     }
 }

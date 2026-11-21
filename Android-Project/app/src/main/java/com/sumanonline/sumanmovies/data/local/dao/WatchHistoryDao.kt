@@ -33,6 +33,15 @@ interface WatchHistoryDao {
     @Query("DELETE FROM watch_history WHERE id = :id")
     suspend fun deleteById(id: String)
 
+    @Query("DELETE FROM watch_history WHERE isCompleted = 0")
+    suspend fun clearContinueWatching()
+
+    @Query("DELETE FROM watch_history WHERE (mediaId = :mediaId OR id = :id OR mediaId = :id) AND isCompleted = 0")
+    suspend fun deleteContinueWatchingByMedia(id: String, mediaId: String)
+
+    @Query("UPDATE watch_history SET isCompleted = 1 WHERE (id = :id OR mediaId = :mediaId OR mediaId = :id) AND isCompleted = 0")
+    suspend fun markMediaCompleted(id: String, mediaId: String)
+
     @Query("DELETE FROM watch_history")
     suspend fun clearAll()
 }

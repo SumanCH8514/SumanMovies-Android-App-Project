@@ -167,6 +167,25 @@ class PlayerActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
+    private var wasPlayingBeforeStop: Boolean = false
+
+    override fun onStart() {
+        super.onStart()
+        if (wasPlayingBeforeStop) {
+            wasPlayingBeforeStop = false
+            viewModel.playerManager.play()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val inPip = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) isInPictureInPictureMode else false
+        if (!inPip && !isChangingConfigurations) {
+            wasPlayingBeforeStop = viewModel.playerManager.playbackState.value.isPlaying
+            viewModel.playerManager.pause()
+        }
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: Configuration

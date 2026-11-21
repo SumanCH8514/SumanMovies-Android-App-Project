@@ -9,6 +9,9 @@ import com.sumanonline.sumanmovies.data.models.Episode
 import com.sumanonline.sumanmovies.data.models.MediaDetails
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
+import com.sumanonline.sumanmovies.data.models.ReAnimeAnimeDetails
+import com.sumanonline.sumanmovies.data.models.ReAnimePlaybackInfo
+import com.sumanonline.sumanmovies.data.models.ReAnimeServerOption
 import com.sumanonline.sumanmovies.data.models.MoviesLeechGenre
 import com.sumanonline.sumanmovies.data.models.ServerState
 import com.sumanonline.sumanmovies.data.models.StreamSource
@@ -137,6 +140,20 @@ class MediaRepository(
 
     suspend fun markCompleted(id: String, completed: Boolean) {
         database.watchHistoryDao().markCompleted(id, completed)
+    }
+
+    suspend fun clearContinueWatching() {
+        database.watchHistoryDao().clearContinueWatching()
+    }
+
+    suspend fun removeContinueWatchingItem(id: String, mediaId: String = "") {
+        val cleanMediaId = mediaId.ifBlank { id.substringBefore(":") }
+        database.watchHistoryDao().deleteContinueWatchingByMedia(id, cleanMediaId)
+    }
+
+    suspend fun markContinueWatchingCompleted(id: String, mediaId: String = "") {
+        val cleanMediaId = mediaId.ifBlank { id.substringBefore(":") }
+        database.watchHistoryDao().markMediaCompleted(id, cleanMediaId)
     }
 
     suspend fun deleteWatchProgress(id: String) {
@@ -581,6 +598,8 @@ class MediaRepository(
         return results
     }
 
+    private val reAnimeDetailsCache = java.util.concurrent.ConcurrentHashMap<String, ReAnimeAnimeDetails>()
+
     suspend fun getReAnimeCatalog(category: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
         val res = reAnimeClient.getCatalog(category, page)
         res.first.forEach { cacheItem(it) }
@@ -591,6 +610,34 @@ class MediaRepository(
         val results = reAnimeClient.search(query)
         results.forEach { cacheItem(it) }
         return results
+    }
+
+    suspend fun getReAnimeAnimeDetails(mediaId: String): ReAnimeAnimeDetails? {
+        val cached = reAnimeDetailsCache[mediaId]
+        if (cached != null) return cached
+        val fetched = reAnimeClient.fetchAnimeDetails(mediaId)
+        if (fetched != null) {
+            reAnimeDetailsCache[mediaId] = fetched
+            if (fetched.anilistId != null) {
+                reAnimeDetailsCache["reanime:${fetched.anilistId}"] = fetched
+            }
+            if (fetched.slug.isNotBlank()) {
+                reAnimeDetailsCache["reanime:${fetched.slug}"] = fetched
+            }
+        }
+        return fetched
+    }
+
+    suspend fun resolveReAnimePlayback(
+        anilistId: Int?,
+        slug: String?,
+        episodeNumber: Int
+    ): ReAnimePlaybackInfo {
+        return reAnimeClient.resolveEpisodePlayback(anilistId, slug, episodeNumber)
+    }
+
+    suspend fun resolveReAnimeDirectStreams(server: ReAnimeServerOption): List<StreamSource> {
+        return reAnimeClient.resolveDirectStreamsForServer(server)
     }
 
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {

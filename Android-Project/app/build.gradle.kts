@@ -67,6 +67,9 @@ dependencies {
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     implementation(libs.media3.session)
+    implementation(libs.media3.datasource)
+    implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.database)
     implementation(libs.media3.ffmpeg.decoder)
 
     implementation(libs.room.runtime)
@@ -98,6 +101,13 @@ tasks.register<Copy>("copyDebugApk") {
     from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
     into(rootProject.file("../apk"))
     rename { "SumanMovies-v1.0.0-debug.apk" }
+}
+
+tasks.register<Exec>("pushApkToGithub") {
+    dependsOn("copyDebugApk", "copyNewPlayerApk")
+    workingDir = rootProject.file("..")
+    commandLine("cmd", "/c", "git add . && git commit -m \"feat: update latest built APK and player improvements\" && git push origin main > scratch_git_push.txt 2>&1")
+    isIgnoreExitValue = true
 }
 
 

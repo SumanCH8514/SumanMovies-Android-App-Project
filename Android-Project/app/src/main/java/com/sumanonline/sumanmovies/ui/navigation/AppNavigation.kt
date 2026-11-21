@@ -51,6 +51,8 @@ import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechViewModel
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModViewModel
+import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeDetailsScreen
+import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeDetailsViewModel
 import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeScreen
 import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeViewModel
 import com.sumanonline.sumanmovies.ui.screens.player.PlayerActivity
@@ -457,12 +459,25 @@ fun AppNavigation(
                         onMediaClick = { item ->
                             repository.cacheItem(item)
                             repository.setSelectedServer(item.id, StreamingServer.REANIME)
-                            launchPlayer(
-                                context = context,
-                                item = item,
-                                server = StreamingServer.REANIME
-                            )
+                            navController.navigate(Screen.ReAnimeDetails.createRoute(item.id))
                         }
+                    )
+                }
+
+                composable(
+                    route = Screen.ReAnimeDetails.route,
+                    arguments = listOf(
+                        navArgument("mediaId") { type = NavType.StringType }
+                    )
+                ) { backStackEntry ->
+                    val rawMediaId = backStackEntry.arguments?.getString("mediaId") ?: ""
+                    val mediaId = java.net.URLDecoder.decode(rawMediaId, "UTF-8")
+                    val reAnimeDetailsViewModel = remember(mediaId, repository) {
+                        ReAnimeDetailsViewModel(repository, mediaId)
+                    }
+                    ReAnimeDetailsScreen(
+                        viewModel = reAnimeDetailsViewModel,
+                        onBack = { navController.popBackStack() }
                     )
                 }
 

@@ -256,10 +256,10 @@ fun HomeScreen(
                                         onMediaClick(media)
                                     },
                                     onMarkWatchedClick = {
-                                        viewModel.markWatched(item.id)
+                                        viewModel.markWatched(item.id, item.mediaId)
                                     },
                                     onDeleteClick = {
-                                        viewModel.removeContinueWatching(item.id)
+                                        viewModel.removeContinueWatching(item.id, item.mediaId)
                                     },
                                     onRestartClick = {
                                         viewModel.restartProgress(item.id)

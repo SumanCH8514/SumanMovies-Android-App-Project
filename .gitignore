@@ -35,6 +35,6 @@ local.properties
 .DS_Store
 Thumbs.db
 *.log
-scratch_git.txt
-scratch_git_err.txt
+scratch*
+
 

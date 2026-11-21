@@ -67,7 +67,10 @@ import com.sumanonline.sumanmovies.data.models.MediaType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,6 +89,7 @@ import com.sumanonline.sumanmovies.data.models.getDisplayCategory
 import com.sumanonline.sumanmovies.data.models.getDisplayQuality
 import com.sumanonline.sumanmovies.data.models.getDisplayTitle
 import com.sumanonline.sumanmovies.ui.screens.customization.PlayerUiStyle
+import com.sumanonline.sumanmovies.ui.screens.player.thumbnail.SeekPreviewView
 import com.sumanonline.sumanmovies.ui.theme.CardElevated
 import com.sumanonline.sumanmovies.ui.theme.LocalAppAccent
 import com.sumanonline.sumanmovies.ui.theme.TextMuted
@@ -128,8 +132,11 @@ fun PlayerScreenClassic(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playerManager.playbackState.collectAsState()
+    val previewFrame by viewModel.thumbnailPreviewManager.previewFrame.collectAsState()
     val accent = LocalAppAccent.current.color
     val context = LocalContext.current
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var sliderPosition by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = modifier
@@ -414,14 +421,33 @@ fun PlayerScreenClassic(
                 ) {
                     val pos = playbackState.currentPositionMs.toFloat()
                     val dur = playbackState.durationMs.coerceAtLeast(1L).toFloat()
+                    val fraction = if (dur > 0f) (if (isDraggingSlider) sliderPosition else pos) / dur else 0f
+
+                    SeekPreviewView(
+                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        progressFraction = fraction,
+                        durationMs = playbackState.durationMs
+                    )
 
                     Slider(
-                        value = pos.coerceIn(0f, dur),
-                        onValueChange = { newPos -> viewModel.playerManager.seekTo(newPos.toLong()) },
+                        value = if (isDraggingSlider) sliderPosition else pos.coerceIn(0f, dur),
+                        onValueChange = { newPos ->
+                            isDraggingSlider = true
+                            sliderPosition = newPos
+                            viewModel.requestSeekPreview(newPos.toLong())
+                        },
+                        onValueChangeFinished = {
+                            isDraggingSlider = false
+                            viewModel.clearSeekPreview()
+                            if (playbackState.isSeekable) {
+                                viewModel.playerManager.seekTo(sliderPosition.toLong())
+                            }
+                        },
+                        enabled = playbackState.isSeekable,
                         valueRange = 0f..dur,
                         colors = SliderDefaults.colors(
-                            thumbColor = accent,
-                            activeTrackColor = accent,
+                            thumbColor = if (playbackState.isSeekable) accent else Color.Gray,
+                            activeTrackColor = if (playbackState.isSeekable) accent else Color.Gray,
                             inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                         ),
                         modifier = Modifier.fillMaxWidth()

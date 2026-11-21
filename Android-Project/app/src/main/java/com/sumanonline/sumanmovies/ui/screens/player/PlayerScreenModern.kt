@@ -118,6 +118,7 @@ import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.getDisplayCategory
 import com.sumanonline.sumanmovies.data.models.getDisplayQuality
 import com.sumanonline.sumanmovies.data.models.getDisplayTitle
+import com.sumanonline.sumanmovies.ui.screens.player.thumbnail.SeekPreviewView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -387,6 +388,7 @@ fun MoviePlayerScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playerManager.playbackState.collectAsState()
+    val previewFrame by viewModel.thumbnailPreviewManager.previewFrame.collectAsState()
 
     var showForwardIndicator by remember { mutableStateOf(false) }
     var forwardSeekSeconds by remember { mutableIntStateOf(0) }
@@ -669,6 +671,12 @@ fun MoviePlayerScreen(
 
                     val hasHours = durationMs >= 3600_000L
 
+                    SeekPreviewView(
+                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        progressFraction = progressFraction,
+                        durationMs = durationMs
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -685,19 +693,25 @@ fun MoviePlayerScreen(
                             onValueChange = { newFrac ->
                                 isDraggingSlider = true
                                 sliderPosition = newFrac
+                                val targetMs = (newFrac * durationMs).toLong()
+                                viewModel.requestSeekPreview(targetMs)
                             },
                             onValueChangeFinished = {
                                 isDraggingSlider = false
-                                val targetMs = (sliderPosition * durationMs).toLong()
-                                viewModel.playerManager.seekTo(targetMs)
+                                viewModel.clearSeekPreview()
+                                if (playbackState.isSeekable) {
+                                    val targetMs = (sliderPosition * durationMs).toLong()
+                                    viewModel.playerManager.seekTo(targetMs)
+                                }
                             },
+                            enabled = playbackState.isSeekable,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(20.dp)
                                 .padding(horizontal = 10.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = goldenAccent,
-                                activeTrackColor = goldenAccent,
+                                thumbColor = if (playbackState.isSeekable) goldenAccent else Color.Gray,
+                                activeTrackColor = if (playbackState.isSeekable) goldenAccent else Color.Gray,
                                 inactiveTrackColor = Color(0xFF374151)
                             )
                         )
@@ -949,6 +963,7 @@ fun SeriesPlayerScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playerManager.playbackState.collectAsState()
+    val previewFrame by viewModel.thumbnailPreviewManager.previewFrame.collectAsState()
 
     var showForwardIndicator by remember { mutableStateOf(false) }
     var forwardSeekSeconds by remember { mutableIntStateOf(0) }
@@ -1331,6 +1346,12 @@ fun SeriesPlayerScreen(
 
                     val hasHours = durationMs >= 3600_000L
 
+                    SeekPreviewView(
+                        previewFrame = if (isDraggingSlider) previewFrame else null,
+                        progressFraction = progressFraction,
+                        durationMs = durationMs
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1347,19 +1368,25 @@ fun SeriesPlayerScreen(
                             onValueChange = { newFrac ->
                                 isDraggingSlider = true
                                 sliderPosition = newFrac
+                                val targetMs = (newFrac * durationMs).toLong()
+                                viewModel.requestSeekPreview(targetMs)
                             },
                             onValueChangeFinished = {
                                 isDraggingSlider = false
-                                val targetMs = (sliderPosition * durationMs).toLong()
-                                viewModel.playerManager.seekTo(targetMs)
+                                viewModel.clearSeekPreview()
+                                if (playbackState.isSeekable) {
+                                    val targetMs = (sliderPosition * durationMs).toLong()
+                                    viewModel.playerManager.seekTo(targetMs)
+                                }
                             },
+                            enabled = playbackState.isSeekable,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(20.dp)
                                 .padding(horizontal = 10.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = goldenAccent,
-                                activeTrackColor = goldenAccent,
+                                thumbColor = if (playbackState.isSeekable) goldenAccent else Color.Gray,
+                                activeTrackColor = if (playbackState.isSeekable) goldenAccent else Color.Gray,
                                 inactiveTrackColor = Color(0xFF374151)
                             )
                         )
@@ -2016,6 +2043,7 @@ private fun DrawersAndDialogs(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playerManager.playbackState.collectAsState()
+    val previewFrame by viewModel.thumbnailPreviewManager.previewFrame.collectAsState()
 
     if (uiState.isAudioTracksModalOpen) {
         Box(
@@ -3347,6 +3375,9 @@ private fun ModernPlayerLoader(
     val isSeries = uiState.mediaType == MediaType.SERIES || uiState.mediaType == MediaType.ANIME || uiState.mediaType == MediaType.DRAMA
 
     val (primaryStatus, secondaryStatus) = when {
+        !uiState.recoveryMessage.isNullOrBlank() -> {
+            Pair("Reconnecting...", uiState.recoveryMessage)
+        }
         uiState.resolvingStreamUrl != null -> {
             val mirrorTag = uiState.currentStream?.mirrorName ?: "Direct Mirror"
             Pair("Checking Host...", "Verifying $serverTitle • $mirrorTag")

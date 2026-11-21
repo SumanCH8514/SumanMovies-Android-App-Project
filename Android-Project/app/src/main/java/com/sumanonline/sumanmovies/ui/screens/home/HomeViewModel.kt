@@ -155,17 +155,27 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
         toggleBookmark(hero)
     }
 
-    fun removeContinueWatching(id: String) {
+    fun removeContinueWatching(id: String, mediaId: String = "") {
         viewModelScope.launch {
-            repository.deleteWatchProgress(id)
-            _uiState.value = _uiState.value.copy(userToastMessage = "Removed from Continue Watching")
+            val target = _uiState.value.continueWatching.firstOrNull { it.id == id || it.mediaId == id || (mediaId.isNotBlank() && it.mediaId == mediaId) }
+            val resolvedMediaId = mediaId.ifBlank { target?.mediaId ?: id.substringBefore(":") }
+            _uiState.value = _uiState.value.copy(
+                continueWatching = _uiState.value.continueWatching.filter { it.id != id && it.mediaId != resolvedMediaId },
+                userToastMessage = "Removed from Continue Watching"
+            )
+            repository.removeContinueWatchingItem(id, resolvedMediaId)
         }
     }
 
-    fun markWatched(id: String) {
+    fun markWatched(id: String, mediaId: String = "") {
         viewModelScope.launch {
-            repository.markCompleted(id, true)
-            _uiState.value = _uiState.value.copy(userToastMessage = "Marked as completed")
+            val target = _uiState.value.continueWatching.firstOrNull { it.id == id || it.mediaId == id || (mediaId.isNotBlank() && it.mediaId == mediaId) }
+            val resolvedMediaId = mediaId.ifBlank { target?.mediaId ?: id.substringBefore(":") }
+            _uiState.value = _uiState.value.copy(
+                continueWatching = _uiState.value.continueWatching.filter { it.id != id && it.mediaId != resolvedMediaId },
+                userToastMessage = "Marked as completed"
+            )
+            repository.markContinueWatchingCompleted(id, resolvedMediaId)
         }
     }
 
@@ -177,11 +187,11 @@ class HomeViewModel(private val repository: MediaRepository) : ViewModel() {
 
     fun clearAllContinueWatching() {
         viewModelScope.launch {
-            val current = _uiState.value.continueWatching
-            current.forEach { item ->
-                repository.deleteWatchProgress(item.id)
-            }
-            _uiState.value = _uiState.value.copy(userToastMessage = "Continue Watching cleared")
+            _uiState.value = _uiState.value.copy(
+                continueWatching = emptyList(),
+                userToastMessage = "Continue Watching cleared"
+            )
+            repository.clearContinueWatching()
         }
     }
 
