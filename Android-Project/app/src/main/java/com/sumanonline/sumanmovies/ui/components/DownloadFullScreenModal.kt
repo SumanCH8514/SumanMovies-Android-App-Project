@@ -297,6 +297,7 @@ fun DownloadFullScreenModal(
                             StreamingServer.KMDL -> "KMDL"
                             StreamingServer.MOVIESLEECH -> "MoviesLeech"
                             StreamingServer.MOVIESMOD -> "MoviesMod"
+                            StreamingServer.ANIMEXIN -> "AnimeXin"
                         }
 
                         Box(

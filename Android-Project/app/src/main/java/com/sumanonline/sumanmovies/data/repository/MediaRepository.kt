@@ -12,12 +12,14 @@ import com.sumanonline.sumanmovies.data.models.MediaType
 import com.sumanonline.sumanmovies.data.models.ReAnimeAnimeDetails
 import com.sumanonline.sumanmovies.data.models.ReAnimePlaybackInfo
 import com.sumanonline.sumanmovies.data.models.ReAnimeServerOption
+import com.sumanonline.sumanmovies.data.models.AnimeXinGenre
 import com.sumanonline.sumanmovies.data.models.MoviesLeechGenre
 import com.sumanonline.sumanmovies.data.models.ServerState
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
 import com.sumanonline.sumanmovies.data.models.TvChannel
+import com.sumanonline.sumanmovies.data.remote.animexin.AnimeXinMobileClient
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
@@ -53,6 +55,7 @@ class MediaRepository(
     private val kmdlClient: KMDLMobileClient = KMDLMobileClient(),
     private val moviesLeechClient: MoviesLeechMobileClient = MoviesLeechMobileClient(),
     private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient(),
+    private val animeXinClient: AnimeXinMobileClient = AnimeXinMobileClient(),
     private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient(),
     private val theIntroDbClient: TheIntroDbClient = TheIntroDbClient()
 ) {
@@ -598,6 +601,22 @@ class MediaRepository(
         return results
     }
 
+    suspend fun getAnimeXinCatalog(categoryPath: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
+        val res = animeXinClient.getCatalog(categoryPath, page)
+        res.first.forEach { cacheItem(it) }
+        return res
+    }
+
+    suspend fun getAnimeXinGenres(): List<AnimeXinGenre> {
+        return animeXinClient.getGenres()
+    }
+
+    suspend fun searchAnimeXin(query: String, page: Int = 1): List<MediaItem> {
+        val results = animeXinClient.search(query, page)
+        results.forEach { cacheItem(it) }
+        return results
+    }
+
     private val reAnimeDetailsCache = java.util.concurrent.ConcurrentHashMap<String, ReAnimeAnimeDetails>()
 
     suspend fun getReAnimeCatalog(category: String? = null, page: Int = 1): Pair<List<MediaItem>, Int> {
@@ -659,6 +678,7 @@ class MediaRepository(
             .removePrefix("kmdl:")
             .removePrefix("moviesmod:")
             .removePrefix("moviesleech:")
+            .removePrefix("animexin:")
             .removePrefix("fourkhdhub:")
             .removePrefix("hdhub4u:")
             .trim()
@@ -876,6 +896,7 @@ class MediaRepository(
             .removePrefix("kmdl:")
             .removePrefix("moviesmod:")
             .removePrefix("moviesleech:")
+            .removePrefix("animexin:")
             .removePrefix("fourkhdhub:")
             .removePrefix("hdhub4u:")
             .trim()

@@ -2,6 +2,13 @@ package com.sumanonline.sumanmovies.ui.navigation
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,6 +56,8 @@ import com.sumanonline.sumanmovies.ui.screens.moviebox.MovieBoxScreen
 import com.sumanonline.sumanmovies.ui.screens.moviebox.MovieBoxViewModel
 import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesleech.MoviesLeechViewModel
+import com.sumanonline.sumanmovies.ui.screens.animexin.AnimeXinScreen
+import com.sumanonline.sumanmovies.ui.screens.animexin.AnimeXinViewModel
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModScreen
 import com.sumanonline.sumanmovies.ui.screens.moviesmod.MoviesModViewModel
 import com.sumanonline.sumanmovies.ui.screens.reanime.ReAnimeDetailsScreen
@@ -190,9 +199,63 @@ fun AppNavigation(
                 .fillMaxSize()
                 .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
+            val rootTabRoutes = setOf(
+                Screen.Home.route,
+                Screen.Catalog.route,
+                Screen.Activity.route,
+                Screen.Library.route,
+                Screen.Profile.route
+            )
+
             NavHost(
                 navController = navController,
-                startDestination = Screen.Home.route
+                startDestination = Screen.Home.route,
+                enterTransition = {
+                    val isRootSwitch = initialState.destination.route in rootTabRoutes && targetState.destination.route in rootTabRoutes
+                    if (isRootSwitch) {
+                        fadeIn(animationSpec = tween(220, easing = LinearOutSlowInEasing))
+                    } else {
+                        slideIntoContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                            animationSpec = tween(320, easing = FastOutSlowInEasing)
+                        ) + fadeIn(animationSpec = tween(300))
+                    }
+                },
+                exitTransition = {
+                    val isRootSwitch = initialState.destination.route in rootTabRoutes && targetState.destination.route in rootTabRoutes
+                    if (isRootSwitch) {
+                        fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing))
+                    } else {
+                        slideOutOfContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                            animationSpec = tween(320, easing = FastOutSlowInEasing),
+                            targetOffset = { it / 4 }
+                        ) + fadeOut(animationSpec = tween(260))
+                    }
+                },
+                popEnterTransition = {
+                    val isRootSwitch = initialState.destination.route in rootTabRoutes && targetState.destination.route in rootTabRoutes
+                    if (isRootSwitch) {
+                        fadeIn(animationSpec = tween(220, easing = LinearOutSlowInEasing))
+                    } else {
+                        slideIntoContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                            animationSpec = tween(320, easing = FastOutSlowInEasing),
+                            initialOffset = { it / 4 }
+                        ) + fadeIn(animationSpec = tween(300))
+                    }
+                },
+                popExitTransition = {
+                    val isRootSwitch = initialState.destination.route in rootTabRoutes && targetState.destination.route in rootTabRoutes
+                    if (isRootSwitch) {
+                        fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing))
+                    } else {
+                        slideOutOfContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                            animationSpec = tween(320, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(260))
+                    }
+                }
             ) {
                 composable(Screen.Home.route) {
                     HomeScreen(
@@ -257,6 +320,9 @@ fun AppNavigation(
                         },
                         onNavigateToMoviesLeech = {
                             navController.navigate(Screen.MoviesLeech.route)
+                        },
+                        onNavigateToAnimeXin = {
+                            navController.navigate(Screen.AnimeXin.route)
                         },
                         onNavigateToMoviesMod = {
                             navController.navigate(Screen.MoviesMod.route)
@@ -434,6 +500,23 @@ fun AppNavigation(
                     )
                 }
 
+                composable(Screen.AnimeXin.route) {
+                    val animeXinViewModel = remember(repository) { AnimeXinViewModel(repository) }
+                    AnimeXinScreen(
+                        viewModel = animeXinViewModel,
+                        onBack = { navController.popBackStack() },
+                        onMediaClick = { item ->
+                            repository.cacheItem(item)
+                            repository.setSelectedServer(item.id, StreamingServer.ANIMEXIN)
+                            launchPlayer(
+                                context = context,
+                                item = item,
+                                server = StreamingServer.ANIMEXIN
+                            )
+                        }
+                    )
+                }
+
                 composable(Screen.MoviesMod.route) {
                     val moviesModViewModel = remember(repository) { MoviesModViewModel(repository) }
                     MoviesModScreen(
@@ -488,6 +571,7 @@ fun AppNavigation(
                         onNavigateToMovieBox = { navController.navigate(Screen.MovieBox.route) },
                         onNavigateToKMDL = { navController.navigate(Screen.KMDL.route) },
                         onNavigateToMoviesLeech = { navController.navigate(Screen.MoviesLeech.route) },
+                        onNavigateToAnimeXin = { navController.navigate(Screen.AnimeXin.route) },
                         onNavigateToMoviesMod = { navController.navigate(Screen.MoviesMod.route) },
                         onNavigateToReAnime = { navController.navigate(Screen.ReAnime.route) },
                         onNavigateToLiveTv = { navController.navigate(Screen.LiveTv.route) },

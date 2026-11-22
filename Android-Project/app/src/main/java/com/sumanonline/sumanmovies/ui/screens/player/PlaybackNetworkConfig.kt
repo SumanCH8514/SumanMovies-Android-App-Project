@@ -86,9 +86,11 @@ object PlaybackNetworkConfig {
                 uriHost.contains("10gbps") ||
                 uriHost.contains("stream") ||
                 uriHost.contains("workers") ||
-                stream.provider == "moviesleech"
+                uriHost.contains("mediafire") ||
+                stream.provider == "moviesleech" ||
+                stream.provider == "animexin"
 
-        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub" || stream.provider == "moviesleech") {
+        if (isDirectCdn || stream.provider == "hdhub4u" || stream.provider == "fourkhdhub" || stream.provider == "moviesleech" || stream.provider == "animexin") {
             val referer = headers["Referer"]
             if (referer != null) {
                 val refererHost = try {

@@ -83,6 +83,7 @@ fun StreamingProvidersScreen(
     modifier: Modifier = Modifier,
     onNavigateToKMDL: (() -> Unit)? = null,
     onNavigateToMoviesLeech: (() -> Unit)? = null,
+    onNavigateToAnimeXin: (() -> Unit)? = null,
     onNavigateToMoviesMod: (() -> Unit)? = null,
     onNavigateToReAnime: (() -> Unit)? = null,
     onNavigateToCategory: ((String, String) -> Unit)? = null
@@ -136,6 +137,17 @@ fun StreamingProvidersScreen(
                 tags = listOf("Bollywood", "South Dubbed", "1080p / 4K", "Direct CDN"),
                 actionLabel = "Explore MoviesLeech",
                 onAction = { onNavigateToMoviesLeech?.invoke() ?: onNavigateToPlay4U() }
+            ),
+            ProviderInfo(
+                id = "animexin",
+                name = "AnimeXin",
+                badge = "Donghua & Anime",
+                status = "Online • Mediafire & Mirror",
+                description = "Dedicated provider for Donghua, Chinese 3D anime, and animated series with Mediafire and mirror downloads.",
+                icon = Icons.Default.AutoAwesome,
+                tags = listOf("Donghua", "Anime", "Mediafire", "GoFile", "VikingFile"),
+                actionLabel = "Explore AnimeXin",
+                onAction = { onNavigateToAnimeXin?.invoke() ?: onNavigateToPlay4U() }
             ),
             ProviderInfo(
                 id = "moviesmod",

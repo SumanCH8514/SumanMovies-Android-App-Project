@@ -2,9 +2,12 @@ package com.sumanonline.sumanmovies
 
 import android.app.Application
 import android.content.Context
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.sumanonline.sumanmovies.data.download.AppDownloadManager
 import com.sumanonline.sumanmovies.data.local.AppDatabase
 import com.sumanonline.sumanmovies.data.local.AppPreferencesManager
+import com.sumanonline.sumanmovies.data.remote.animexin.AnimeXinMobileClient
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
@@ -19,7 +22,7 @@ import com.sumanonline.sumanmovies.data.repository.MediaRepository
 import com.sumanonline.sumanmovies.data.repository.PlaybackResolver
 import com.sumanonline.sumanmovies.data.repository.ServerSelectionManager
 
-class SumanMoviesApp : Application() {
+class SumanMoviesApp : Application(), ImageLoaderFactory {
 
     lateinit var database: AppDatabase
         private set
@@ -57,6 +60,9 @@ class SumanMoviesApp : Application() {
     lateinit var moviesModClient: MoviesModMobileClient
         private set
 
+    lateinit var animeXinClient: AnimeXinMobileClient
+        private set
+
     lateinit var downloadManager: AppDownloadManager
         private set
 
@@ -85,6 +91,7 @@ class SumanMoviesApp : Application() {
         kmdlClient = KMDLMobileClient()
         moviesLeechClient = MoviesLeechMobileClient()
         moviesModClient = MoviesModMobileClient()
+        animeXinClient = AnimeXinMobileClient()
         downloadManager = AppDownloadManager(this, database.downloadDao(), preferencesManager)
         serverSelectionManager = ServerSelectionManager(this)
         val searchHistoryManager = com.sumanonline.sumanmovies.data.repository.SearchHistoryManager(this)
@@ -96,7 +103,8 @@ class SumanMoviesApp : Application() {
             play4UClient = play4UClient,
             kmdlClient = kmdlClient,
             moviesLeechClient = moviesLeechClient,
-            moviesModClient = moviesModClient
+            moviesModClient = moviesModClient,
+            animeXinClient = animeXinClient
         )
         mediaRepository = MediaRepository(
             database = database,
@@ -112,8 +120,29 @@ class SumanMoviesApp : Application() {
             searchHistoryManager = searchHistoryManager,
             kmdlClient = kmdlClient,
             moviesLeechClient = moviesLeechClient,
-            moviesModClient = moviesModClient
+            moviesModClient = moviesModClient,
+            animeXinClient = animeXinClient
         )
+    }
+
+    override fun newImageLoader(): ImageLoader {
+        val okHttpClient = okhttp3.OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val host = request.url.host
+                val newRequestBuilder = request.newBuilder()
+                if (host.contains("animexin.dev")) {
+                    newRequestBuilder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    newRequestBuilder.header("Referer", "https://animexin.dev/")
+                }
+                chain.proceed(newRequestBuilder.build())
+            }
+            .build()
+
+        return ImageLoader.Builder(this)
+            .okHttpClient(okHttpClient)
+            .crossfade(true)
+            .build()
     }
 
     companion object {

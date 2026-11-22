@@ -13,7 +13,8 @@ enum class StreamingServer(
     REANIME("reanime", "ReAnime", "Anime HD"),
     KMDL("kmdl", "KMDL", "Cloud Drive"),
     MOVIESLEECH("moviesleech", "MoviesLeech", "1080p / 4K"),
-    MOVIESMOD("moviesmod", "MoviesMod", "Dual Audio");
+    MOVIESMOD("moviesmod", "MoviesMod", "Dual Audio"),
+    ANIMEXIN("animexin", "AnimeXin", "Donghua & Anime");
 
     companion object {
         fun fromId(id: String?): StreamingServer {
@@ -21,7 +22,7 @@ enum class StreamingServer(
         }
 
         fun getAvailableServers(isAnime: Boolean = false, hasReAnime: Boolean = false): List<StreamingServer> {
-            return if (isAnime || hasReAnime) entries else entries.filter { it != REANIME }
+            return if (isAnime || hasReAnime) entries else entries.filter { it != REANIME && it != ANIMEXIN }
         }
     }
 }
@@ -34,6 +35,7 @@ fun isAnimeCandidate(
 ): Boolean {
     if (mediaType == MediaType.ANIME) return true
     if (id?.startsWith("reanime:", ignoreCase = true) == true) return true
+    if (id?.startsWith("animexin:", ignoreCase = true) == true) return true
     if (genres?.any { it.contains("anime", ignoreCase = true) || it.contains("animation", ignoreCase = true) } == true) return true
     val lower = title.lowercase().trim()
     val commonAnime = listOf(
@@ -66,6 +68,11 @@ data class ServerState(
 )
 
 data class MoviesLeechGenre(
+    val name: String,
+    val path: String
+)
+
+data class AnimeXinGenre(
     val name: String,
     val path: String
 )

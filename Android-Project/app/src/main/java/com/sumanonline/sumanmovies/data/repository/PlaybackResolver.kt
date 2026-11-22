@@ -5,6 +5,7 @@ import com.sumanonline.sumanmovies.data.models.ServerState
 import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.models.SubtitleTrack
+import com.sumanonline.sumanmovies.data.remote.animexin.AnimeXinMobileClient
 import com.sumanonline.sumanmovies.data.remote.backend.BackendRepository
 import com.sumanonline.sumanmovies.data.remote.fourkhdhub.FourKHdHubMobileClient
 import com.sumanonline.sumanmovies.data.remote.hdhub4u.HDHub4uMobileClient
@@ -31,7 +32,8 @@ class PlaybackResolver(
     private val reAnimeClient: ReAnimeMobileClient = ReAnimeMobileClient(),
     private val kmdlClient: KMDLMobileClient = KMDLMobileClient(),
     private val moviesLeechClient: MoviesLeechMobileClient = MoviesLeechMobileClient(),
-    private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient()
+    private val moviesModClient: MoviesModMobileClient = MoviesModMobileClient(),
+    private val animeXinClient: AnimeXinMobileClient = AnimeXinMobileClient()
 ) {
     private val serverCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ServerState>>()
     private val cacheTtlMs = 15 * 60 * 1000L
@@ -73,7 +75,7 @@ class PlaybackResolver(
         }
 
         try {
-            val serverTimeoutMs = if (server == StreamingServer.MOVIEBOX || server == StreamingServer.MOVIESLEECH || server == StreamingServer.KMDL) 30000L else 15000L
+            val serverTimeoutMs = if (server == StreamingServer.MOVIEBOX || server == StreamingServer.MOVIESLEECH || server == StreamingServer.ANIMEXIN || server == StreamingServer.KMDL) 30000L else 15000L
             val state = kotlinx.coroutines.withTimeoutOrNull(serverTimeoutMs) {
                 val (rawStreams, subtitles) = when (server) {
                     StreamingServer.MOVIEBOX -> resolveMovieBox(title, season, episode, providerId, releaseYear)
@@ -85,6 +87,7 @@ class PlaybackResolver(
                     StreamingServer.KMDL -> resolveKMDL(title, season, episode, providerId, releaseYear)
                     StreamingServer.MOVIESLEECH -> resolveMoviesLeech(title, season, episode, providerId, releaseYear)
                     StreamingServer.MOVIESMOD -> resolveMoviesMod(title, season, episode, providerId, releaseYear)
+                    StreamingServer.ANIMEXIN -> resolveAnimeXin(title, season, episode, providerId, releaseYear)
                 }
 
                 val validStreams = rawStreams.filter { validateStreamSource(it) }
@@ -682,6 +685,48 @@ class PlaybackResolver(
 
         if (match != null) {
             val streams = moviesModClient.resolveStream(match.id, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
+            }
+        }
+
+        return Pair(emptyList(), emptyList())
+    }
+
+    private suspend fun resolveAnimeXin(
+        title: String,
+        season: Int,
+        episode: Int,
+        providerId: String?,
+        releaseYear: String? = null
+    ): Pair<List<StreamSource>, List<SubtitleTrack>> {
+        if (providerId?.startsWith("animexin:") == true) {
+            val streams = animeXinClient.resolveStream(providerId, season, episode)
+            if (streams.isNotEmpty()) {
+                return Pair(streams, emptyList())
+            }
+        }
+
+        var results = animeXinClient.search(title)
+        if (results.isEmpty()) {
+            val queries = MediaMatcher.buildSearchQueries(title)
+            for (q in queries) {
+                if (q.equals(title, ignoreCase = true)) continue
+                results = animeXinClient.search(q)
+                if (results.isNotEmpty()) break
+            }
+        }
+
+        val match = MediaMatcher.findBestMatch(
+            results,
+            targetTitle = title,
+            targetYear = releaseYear,
+            season = season,
+            isSeries = (season > 0)
+        ) ?: results.firstOrNull()
+
+        if (match != null) {
+            val streams = animeXinClient.resolveStream(match.id, season, episode)
             if (streams.isNotEmpty()) {
                 return Pair(streams, emptyList())
             }

@@ -15,6 +15,7 @@ sealed class Screen(val route: String) {
     object KMDL : Screen("kmdl")
     object MoviesLeech : Screen("moviesleech")
     object MoviesMod : Screen("moviesmod")
+    object AnimeXin : Screen("animexin")
     object ReAnime : Screen("reanime")
     object ReAnimeDetails : Screen("reanime_details/{mediaId}") {
         fun createRoute(mediaId: String) =

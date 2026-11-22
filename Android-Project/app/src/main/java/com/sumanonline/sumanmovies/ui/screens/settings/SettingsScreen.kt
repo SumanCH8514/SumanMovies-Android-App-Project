@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -817,23 +819,39 @@ private fun AnimatedConfirmClearDialog(
                             onClick = onDismiss,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp),
+                                .heightIn(min = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                             border = BorderStroke(1.dp, BorderDark)
                         ) {
-                            Text("Cancel", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "Cancel",
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                textAlign = TextAlign.Center
+                            )
                         }
 
                         Button(
                             onClick = onConfirm,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp),
+                                .heightIn(min = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
                         ) {
-                            Text(confirmButtonText, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = confirmButtonText,
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }

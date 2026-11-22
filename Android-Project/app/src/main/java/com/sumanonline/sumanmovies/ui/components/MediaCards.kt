@@ -45,11 +45,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.sumanonline.sumanmovies.data.local.entities.WatchHistoryEntity
 import com.sumanonline.sumanmovies.data.models.MediaItem
 import com.sumanonline.sumanmovies.data.models.MediaType
@@ -107,6 +109,24 @@ fun SectionHeader(
 }
 
 @Composable
+private fun buildSafeImageModel(url: String?): Any? {
+    if (url.isNullOrBlank()) return null
+    val context = LocalContext.current
+    return remember(url) {
+        if (url.contains("animexin.dev")) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .addHeader("Referer", "https://animexin.dev/")
+                .crossfade(true)
+                .build()
+        } else {
+            url
+        }
+    }
+}
+
+@Composable
 fun VerticalPosterCard(
     item: MediaItem,
     onClick: () -> Unit,
@@ -134,7 +154,7 @@ fun VerticalPosterCard(
         ) {
             if (!item.posterUrl.isNullOrBlank()) {
                 AsyncImage(
-                    model = item.posterUrl,
+                    model = buildSafeImageModel(item.posterUrl),
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -303,7 +323,7 @@ fun ContinueWatchingCard(
 
             if (!displayImage.isNullOrBlank()) {
                 AsyncImage(
-                    model = displayImage,
+                    model = buildSafeImageModel(displayImage),
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -585,7 +605,7 @@ fun LandscapeCard(
             val img = item.backdropUrl ?: item.posterUrl
             if (!img.isNullOrBlank()) {
                 AsyncImage(
-                    model = img,
+                    model = buildSafeImageModel(img),
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

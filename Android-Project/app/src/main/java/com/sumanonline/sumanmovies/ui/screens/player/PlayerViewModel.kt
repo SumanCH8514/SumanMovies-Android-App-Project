@@ -1190,11 +1190,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun selectDrawerServer(server: StreamingServer) {
+    fun selectDrawerServer(server: StreamingServer, forceReload: Boolean = false) {
         val s = _uiState.value
-        if (s.drawerSelectedServer == server && s.serverStreamsMap.containsKey(server)) return
+        if (!forceReload && s.drawerSelectedServer == server && s.serverStreamsMap.containsKey(server)) return
 
-        val cached = _serverStreamsCache[server]
+        val cached = if (forceReload) null else _serverStreamsCache[server]
         if (cached != null && cached.isNotEmpty()) {
             val qualities = getAvailableQualitiesForServer(cached)
             val defaultQuality = qualities.firstOrNull { it == "1080p" } ?: qualities.firstOrNull()
@@ -1203,7 +1203,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 drawerSelectedQuality = defaultQuality
             )
         } else {
+            if (forceReload) {
+                _serverStreamsCache.remove(server)
+            }
+            val curMap = s.serverStreamsMap.toMutableMap()
+            if (forceReload) {
+                curMap.remove(server)
+            }
             _uiState.value = s.copy(
+                serverStreamsMap = curMap,
                 drawerSelectedServer = server,
                 drawerSelectedQuality = null,
                 loadingServers = s.loadingServers + server
@@ -1253,10 +1261,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } catch (_: Exception) {
                     val loading = _uiState.value.loadingServers - server
-                    _uiState.value = _uiState.value.copy(loadingServers = loading)
+                    val cur = _uiState.value.serverStreamsMap.toMutableMap()
+                    cur[server] = emptyList()
+                    _uiState.value = _uiState.value.copy(serverStreamsMap = cur, loadingServers = loading)
                 }
             }
         }
+    }
+
+    fun retryFetchServerStreams(server: StreamingServer) {
+        selectDrawerServer(server, forceReload = true)
     }
 
     fun selectDrawerQuality(quality: String) {

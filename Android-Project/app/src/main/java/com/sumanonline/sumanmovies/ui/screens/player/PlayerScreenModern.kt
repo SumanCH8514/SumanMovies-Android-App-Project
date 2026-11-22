@@ -14,11 +14,14 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.FastForward
@@ -48,6 +51,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -254,6 +258,64 @@ private fun cleanSeriesBaseTitle(rawTitle: String): String {
         .replace(Regex("""\s*\(\d{4}\)"""), "")
         .trim()
         .ifBlank { rawTitle }
+}
+
+private fun resolveStreamDisplaySize(
+    stream: StreamSource,
+    durationMs: Long,
+    mediaType: MediaType?
+): String? {
+    if (!stream.sizeFormatted.isNullOrBlank()) {
+        return stream.sizeFormatted
+    }
+
+    val bytes = stream.sizeBytes
+    if (bytes != null && bytes > 0L) {
+        val gb = bytes.toDouble() / (1024.0 * 1024.0 * 1024.0)
+        return if (gb >= 1.0) {
+            String.format(Locale.US, "%.1f GB", gb)
+        } else {
+            val mb = bytes.toDouble() / (1024.0 * 1024.0)
+            String.format(Locale.US, "%.0f MB", mb)
+        }
+    }
+
+    val combined = (stream.title ?: "") + " " + stream.label
+    val sizeRegex = Regex("""\b(\d+(?:\.\d+)?\s*(?:GB|MB|GiB|MiB))\b""", RegexOption.IGNORE_CASE)
+    val match = sizeRegex.find(combined)
+    if (match != null) {
+        return match.groupValues[1].uppercase().trim()
+    }
+
+    val durMs = if (durationMs > 60_000L) {
+        durationMs
+    } else {
+        val durRegex = Regex("""\b(\d+)\s*(?:min|mins|m)\b""", RegexOption.IGNORE_CASE)
+        val m = durRegex.find(combined)
+        if (m != null) {
+            (m.groupValues[1].toLongOrNull() ?: 45L) * 60_000L
+        } else if (mediaType == MediaType.MOVIE) {
+            110L * 60_000L
+        } else {
+            45L * 60_000L
+        }
+    }
+
+    val q = stream.quality.lowercase()
+    val mbPerMin = when {
+        q.contains("4k") || q.contains("2160") -> 52.0
+        q.contains("1080") -> 22.0
+        q.contains("720") -> 11.0
+        q.contains("480") || q.contains("360") -> 6.0
+        else -> 18.0
+    }
+
+    val totalMb = (durMs / 60_000L) * mbPerMin
+    return if (totalMb >= 1000.0) {
+        String.format(Locale.US, "%.1f GB", totalMb / 1024.0)
+    } else {
+        String.format(Locale.US, "%.0f MB", totalMb.coerceAtLeast(150.0))
+    }
 }
 
 @Composable
@@ -2470,20 +2532,45 @@ private fun DrawersAndDialogs(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                    val isAnime = uiState.mediaType == MediaType.ANIME ||
+                        uiState.selectedServer == StreamingServer.REANIME ||
+                        uiState.drawerSelectedServer == StreamingServer.REANIME ||
+                        uiState.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
+                        uiState.mediaId.startsWith("reanime:") ||
+                        com.sumanonline.sumanmovies.data.models.isAnimeCandidate(uiState.mediaTitle, uiState.mediaType, null, uiState.mediaId)
+
+                    val availableServers = remember(isAnime, uiState.serverStreamsMap) {
+                        StreamingServer.getAvailableServers(isAnime, uiState.serverStreamsMap.containsKey(StreamingServer.REANIME))
+                    }
+
+                    val serverListState = rememberLazyListState()
+                    val targetServer = uiState.drawerSelectedServer ?: uiState.selectedServer
+                    val activeServerIndex = remember(availableServers, targetServer, uiState.selectedServer) {
+                        val idx = availableServers.indexOf(targetServer)
+                        if (idx >= 0) idx else availableServers.indexOf(uiState.selectedServer).coerceAtLeast(0)
+                    }
+
+                    LaunchedEffect(uiState.isStreamsDrawerOpen, targetServer, activeServerIndex) {
+                        if (uiState.isStreamsDrawerOpen && activeServerIndex in availableServers.indices) {
+                            delay(120L)
+                            val visibleItem = serverListState.layoutInfo.visibleItemsInfo.find { it.index == activeServerIndex }
+                            val viewportWidth = serverListState.layoutInfo.viewportEndOffset - serverListState.layoutInfo.viewportStartOffset
+                            val isFullyVisible = visibleItem != null &&
+                                visibleItem.offset >= 0 &&
+                                (visibleItem.offset + visibleItem.size) <= viewportWidth
+
+                            if (!isFullyVisible) {
+                                serverListState.animateScrollToItem(activeServerIndex)
+                            }
+                        }
+                    }
+
+                    LazyRow(
+                        state = serverListState,
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val isAnime = uiState.mediaType == MediaType.ANIME ||
-                            uiState.selectedServer == StreamingServer.REANIME ||
-                            uiState.drawerSelectedServer == StreamingServer.REANIME ||
-                            uiState.serverStreamsMap.containsKey(StreamingServer.REANIME) ||
-                            uiState.mediaId.startsWith("reanime:") ||
-                            com.sumanonline.sumanmovies.data.models.isAnimeCandidate(uiState.mediaTitle, uiState.mediaType, null, uiState.mediaId)
-
-                        StreamingServer.getAvailableServers(isAnime, uiState.serverStreamsMap.containsKey(StreamingServer.REANIME)).forEach { server ->
+                        items(availableServers, key = { it.name }) { server ->
                             val isViewed = (uiState.drawerSelectedServer == server)
                             val isPlaying = (uiState.selectedServer == server && uiState.currentStream != null)
                             val isLoading = uiState.loadingServers.contains(server)
@@ -2542,7 +2629,6 @@ private fun DrawersAndDialogs(
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -2617,36 +2703,15 @@ private fun DrawersAndDialogs(
                                                     RoundedCornerShape(10.dp)
                                                 )
                                                 .clickable { viewModel.selectDrawerQuality(quality) }
-                                                .padding(horizontal = 10.dp, vertical = 9.dp)
+                                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                                            contentAlignment = Alignment.CenterStart
                                         ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                    Text(
-                                                        text = quality,
-                                                        color = if (isQualitySelected) goldenAccent else Color.White,
-                                                        fontSize = 12.5.sp,
-                                                        fontWeight = if (isQualitySelected) FontWeight.Bold else FontWeight.SemiBold
-                                                    )
-                                                    Text(
-                                                        text = "$linkCount ${if (linkCount == 1) "source" else "sources"}",
-                                                        color = if (isQualitySelected) goldenAccent.copy(alpha = 0.85f) else Color(0xFF94A3B8),
-                                                        fontSize = 9.5.sp,
-                                                        fontWeight = FontWeight.Normal
-                                                    )
-                                                }
-                                                if (isQualitySelected) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Check,
-                                                        contentDescription = null,
-                                                        tint = goldenAccent,
-                                                        modifier = Modifier.size(13.dp)
-                                                    )
-                                                }
-                                            }
+                                            Text(
+                                                text = "$quality ($linkCount)",
+                                                color = if (isQualitySelected) goldenAccent else Color.White,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = if (isQualitySelected) FontWeight.Bold else FontWeight.SemiBold
+                                            )
                                         }
                                     }
                                 }
@@ -2694,36 +2759,106 @@ private fun DrawersAndDialogs(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            if (isCurrentServerLoading && streamsForCurrentServer.isEmpty()) {
+                            if (streamsForCurrentServer.isEmpty()) {
+                                val retryInfiniteTransition = rememberInfiniteTransition(label = "serverRetry")
+                                val spinAngle by retryInfiniteTransition.animateFloat(
+                                    initialValue = 0f,
+                                    targetValue = 360f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(800, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Restart
+                                    ),
+                                    label = "retrySpin"
+                                )
+                                val pulseScale by retryInfiniteTransition.animateFloat(
+                                    initialValue = 1f,
+                                    targetValue = 1.08f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1200, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "retryPulse"
+                                )
+
                                 Box(
                                     modifier = Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(24.dp),
-                                            color = goldenAccent,
-                                            strokeWidth = 2.dp
-                                        )
-                                        Spacer(modifier = Modifier.height(10.dp))
-                                        Text(
-                                            text = "Loading ${currentServer.displayName} streams...",
-                                            color = Color(0xFF94A3B8),
-                                            fontSize = 11.5.sp
-                                        )
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = true,
+                                        enter = fadeIn(tween(300)) + scaleIn(initialScale = 0.88f)
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(52.dp)
+                                                    .graphicsLayer {
+                                                        if (!isCurrentServerLoading) {
+                                                            scaleX = pulseScale
+                                                            scaleY = pulseScale
+                                                        }
+                                                    }
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (isCurrentServerLoading) goldenAccent.copy(alpha = 0.18f)
+                                                        else Color(0xFF1E1E26)
+                                                    )
+                                                    .border(
+                                                        BorderStroke(
+                                                            1.2.dp,
+                                                            goldenAccent.copy(alpha = if (isCurrentServerLoading) 0.85f else 0.45f)
+                                                        ),
+                                                        CircleShape
+                                                    )
+                                                    .clickable(enabled = !isCurrentServerLoading) {
+                                                        viewModel.retryFetchServerStreams(currentServer)
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Retry fetching from ${currentServer.displayName}",
+                                                    tint = goldenAccent,
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .graphicsLayer {
+                                                            rotationZ = if (isCurrentServerLoading) spinAngle else 0f
+                                                        }
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.height(14.dp))
+
+                                            Text(
+                                                text = if (isCurrentServerLoading) {
+                                                    "Fetching ${currentServer.displayName} streams..."
+                                                } else {
+                                                    "No streams found on ${currentServer.displayName}"
+                                                },
+                                                color = if (isCurrentServerLoading) goldenAccent else Color(0xFFCBD5E1),
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+
+                                            Spacer(modifier = Modifier.height(4.dp))
+
+                                            Text(
+                                                text = if (isCurrentServerLoading) {
+                                                    "Checking available video sources..."
+                                                } else {
+                                                    "Tap icon to retry fetching"
+                                                },
+                                                color = Color(0xFF64748B),
+                                                fontSize = 11.sp,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+                                        }
                                     }
-                                }
-                            } else if (streamsForCurrentServer.isEmpty()) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No streams found on ${currentServer.displayName}",
-                                        color = Color(0xFF94A3B8),
-                                        fontSize = 11.5.sp,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                    )
                                 }
                             } else if (streamsForQuality.isEmpty()) {
                                 Box(
@@ -2763,20 +2898,22 @@ private fun DrawersAndDialogs(
                                         }.removePrefix("$formatBadge ").trim()
 
                                         val isStreamOnline = stream.isOnline
+                                        val activeGreen = Color(0xFF22C55E)
+                                        val activeGreenLight = Color(0xFF4ADE80)
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(12.dp))
                                                 .background(
                                                     if (!isStreamOnline) Color(0xFF141419)
-                                                    else if (isPlayingThis) goldenAccent.copy(alpha = 0.12f)
+                                                    else if (isPlayingThis) activeGreen.copy(alpha = 0.12f)
                                                     else Color(0xFF16161D)
                                                 )
                                                 .border(
                                                     BorderStroke(
                                                         1.dp,
                                                         if (!isStreamOnline) Color(0xFFEF4444).copy(alpha = 0.35f)
-                                                        else if (isPlayingThis) goldenAccent
+                                                        else if (isPlayingThis) activeGreen
                                                         else Color(0xFF1F1F27)
                                                     ),
                                                     RoundedCornerShape(12.dp)
@@ -2843,16 +2980,17 @@ private fun DrawersAndDialogs(
                                                             )
                                                         }
 
-                                                        if (!stream.sizeFormatted.isNullOrBlank()) {
+                                                        val streamSize = resolveStreamDisplaySize(stream, playbackState.durationMs, uiState.mediaType)
+                                                        if (!streamSize.isNullOrBlank()) {
                                                             Box(
                                                                 modifier = Modifier
                                                                     .clip(RoundedCornerShape(4.dp))
-                                                                    .background(goldenAccent.copy(alpha = 0.15f))
+                                                                    .background(Color(0xFF1F1F27))
                                                                     .padding(horizontal = 5.dp, vertical = 2.dp)
                                                             ) {
                                                                 Text(
-                                                                    text = stream.sizeFormatted,
-                                                                    color = goldenAccent,
+                                                                    text = streamSize,
+                                                                    color = Color(0xFFA7F3D0),
                                                                     fontSize = 9.5.sp,
                                                                     fontWeight = FontWeight.Bold
                                                                 )
@@ -2912,27 +3050,18 @@ private fun DrawersAndDialogs(
                                                 if (isPlayingThis) {
                                                     Box(
                                                         modifier = Modifier
-                                                            .clip(RoundedCornerShape(6.dp))
-                                                            .background(goldenAccent.copy(alpha = 0.2f))
-                                                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                                                            .size(28.dp)
+                                                            .clip(CircleShape)
+                                                            .background(activeGreen.copy(alpha = 0.22f))
+                                                            .border(BorderStroke(1.dp, activeGreen.copy(alpha = 0.7f)), CircleShape),
+                                                        contentAlignment = Alignment.Center
                                                     ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = "PLAYING",
-                                                                color = goldenAccent,
-                                                                fontSize = 9.sp,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                            Icon(
-                                                                imageVector = Icons.Default.Check,
-                                                                contentDescription = "Playing",
-                                                                tint = goldenAccent,
-                                                                modifier = Modifier.size(12.dp)
-                                                            )
-                                                        }
+                                                        Icon(
+                                                            imageVector = Icons.Default.PlayArrow,
+                                                            contentDescription = "Currently playing",
+                                                            tint = activeGreenLight,
+                                                            modifier = Modifier.size(15.dp)
+                                                        )
                                                     }
                                                 } else if (!isStreamOnline) {
                                                     Box(

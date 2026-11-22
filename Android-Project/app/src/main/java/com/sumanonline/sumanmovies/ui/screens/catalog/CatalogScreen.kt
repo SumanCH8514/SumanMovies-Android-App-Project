@@ -100,6 +100,7 @@ fun CatalogScreen(
     onNavigateToMovieBox: (() -> Unit)? = null,
     onNavigateToKMDL: (() -> Unit)? = null,
     onNavigateToMoviesLeech: (() -> Unit)? = null,
+    onNavigateToAnimeXin: (() -> Unit)? = null,
     onNavigateToMoviesMod: (() -> Unit)? = null,
     onNavigateToReAnime: (() -> Unit)? = null,
     onNavigateToLiveTv: (() -> Unit)? = null,
@@ -382,6 +383,18 @@ fun CatalogScreen(
                                 icon = Icons.Default.CloudDownload,
                                 accentColor = accent,
                                 onClick = { onNavigateToMoviesLeech?.invoke() },
+                                modifier = Modifier.width(200.dp)
+                            )
+                        }
+
+                        item {
+                            ProviderHubCard(
+                                title = "AnimeXin",
+                                badge = "Donghua & Anime",
+                                description = "Direct Donghua & Chinese Anime • Mediafire & Mirror CDN",
+                                icon = Icons.Default.AutoAwesome,
+                                accentColor = accent,
+                                onClick = { onNavigateToAnimeXin?.invoke() },
                                 modifier = Modifier.width(200.dp)
                             )
                         }
