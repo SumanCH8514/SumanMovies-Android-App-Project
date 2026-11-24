@@ -116,18 +116,6 @@ tasks.register("copyAllApks") {
     dependsOn("copyReleaseApk", "copyDebugApk")
 }
 
-tasks.register<Exec>("finalPush") {
-    workingDir = rootProject.file("..")
-    commandLine(
-        "cmd", "/c",
-        "del /f /q scratch_clean_push.txt 2>nul & " +
-        "git add . & " +
-        "git commit -m \"chore: clean up build scripts and scratch files\" & " +
-        "git push origin main"
-    )
-    isIgnoreExitValue = true
-}
-
 
 
 
