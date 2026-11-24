@@ -341,6 +341,6 @@ This project is developed and maintained for **personal research and educational
 
 ## 👨‍💻 Author & Maintainer
 
-- **Developer**: **Suman Ghosh**
+- **Developer**: **SumanOnline Web Services**
 - **GitHub**: [@SumanCH8514](https://github.com/SumanCH8514)
 - **Repository**: [SumanMovies-Android-App-Project](https://github.com/SumanCH8514/SumanMovies-Android-App-Project)
