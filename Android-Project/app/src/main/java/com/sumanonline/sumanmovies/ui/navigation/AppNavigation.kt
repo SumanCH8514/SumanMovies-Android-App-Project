@@ -33,6 +33,7 @@ import com.sumanonline.sumanmovies.data.models.StreamSource
 import com.sumanonline.sumanmovies.data.models.StreamingServer
 import com.sumanonline.sumanmovies.data.repository.MediaRepository
 import com.sumanonline.sumanmovies.ui.components.BottomNavBar
+import com.sumanonline.sumanmovies.ui.screens.about.AboutProjectScreen
 import com.sumanonline.sumanmovies.ui.screens.activity.ActivityScreen
 import com.sumanonline.sumanmovies.ui.screens.activity.ActivityViewModel
 import com.sumanonline.sumanmovies.ui.screens.catalog.CatalogScreen
@@ -397,6 +398,9 @@ fun AppNavigation(
                                 launchSingleTop = true
                                 restoreState = true
                             }
+                        },
+                        onNavigateAbout = {
+                            navController.navigate(Screen.About.route)
                         }
                     )
                 }
@@ -411,7 +415,19 @@ fun AppNavigation(
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         viewModel = settingsViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onNavigateAbout = {
+                            navController.navigate(Screen.About.route)
+                        }
+                    )
+                }
+
+                composable(Screen.About.route) {
+                    AboutProjectScreen(
+                        onBack = { navController.popBackStack() },
+                        onCheckForUpdates = {
+                            settingsViewModel.checkForUpdates()
+                        }
                     )
                 }
 

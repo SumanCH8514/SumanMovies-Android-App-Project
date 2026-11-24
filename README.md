@@ -20,10 +20,11 @@
 
 ## 📥 Direct APK Download
 
-Ready-to-install debug APK built with complete hardware acceleration, multi-provider resolvers, and the offline download manager:
+Ready-to-install APK artifacts built with complete hardware acceleration, multi-provider resolvers, and the offline download manager:
 
-- **Latest Build (New Player):** [**`SumanMovies-v1.0.0-new-player.apk`**](apk/SumanMovies-v1.0.0-new-player.apk) (Located in [`apk/`](apk/))
-- **Standard Build:** [**`SumanMovies-v1.0.0-debug.apk`**](apk/SumanMovies-v1.0.0-debug.apk)
+- **Release Build (v1.1.0):** [**`SumanMovies-v1.1.0-release-unsigned.apk`**](apk/SumanMovies-v1.1.0-release-unsigned.apk) (Located in [`apk/`](apk/))
+- **Debug Build (v1.1.0):** [**`SumanMovies-v1.1.0-debug.apk`**](apk/SumanMovies-v1.1.0-debug.apk)
+- **Version:** `v1.1.0` (Build `2`)
 - **Architecture:** `arm64-v8a`, `armeabi-v7a`, `x86_64`
 - **Minimum OS:** Android 8.0 (API Level 26) or higher
 - **Target OS:** Android 15 (API Level 35)

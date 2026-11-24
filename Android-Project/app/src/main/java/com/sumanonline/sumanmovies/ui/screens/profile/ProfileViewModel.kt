@@ -90,7 +90,7 @@ class ProfileViewModel(
         _uiState.value = _uiState.value.copy(showEditNameDialog = show)
     }
 
-    fun checkForUpdates(currentVersion: String = "1.0.0") {
+    fun checkForUpdates(currentVersion: String = com.sumanonline.sumanmovies.BuildConfig.VERSION_NAME) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isCheckingForUpdates = true)
             val result = updateManager.checkForUpdates(currentVersion)

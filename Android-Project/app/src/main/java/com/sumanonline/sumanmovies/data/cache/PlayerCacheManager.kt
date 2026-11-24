@@ -70,12 +70,13 @@ object PlayerCacheManager {
         }
     }
 
-    fun generateCacheKey(uri: Uri): String {
+    fun generateCacheKey(url: String): String {
         return try {
-            val scheme = uri.scheme?.lowercase() ?: "https"
-            val host = uri.host?.lowercase() ?: ""
-            val port = if (uri.port != -1) ":${uri.port}" else ""
-            val path = uri.path ?: ""
+            val javaUri = java.net.URI(url)
+            val scheme = javaUri.scheme?.lowercase() ?: "https"
+            val host = javaUri.host?.lowercase() ?: ""
+            val port = if (javaUri.port != -1) ":${javaUri.port}" else ""
+            val path = javaUri.path ?: ""
 
             val ephemeralParams = setOf(
                 "token", "expires", "expiry", "expire", "sig", "signature", "hmac",
@@ -83,33 +84,41 @@ object PlayerCacheManager {
                 "session", "stream_token", "hash", "sign", "validto", "ip"
             )
 
-            val queryNames = try {
-                uri.queryParameterNames
-            } catch (_: Throwable) {
-                emptySet()
-            }
-
-            val stableQueryParts = queryNames
-                .filter { !ephemeralParams.contains(it.lowercase()) }
-                .sorted()
-                .mapNotNull { name ->
-                    val value = uri.getQueryParameter(name)
-                    if (value != null) "$name=$value" else null
-                }
-
-            val stableQuery = if (stableQueryParts.isNotEmpty()) {
-                "?" + stableQueryParts.joinToString("&")
-            } else {
-                ""
-            }
+            val rawQuery = javaUri.rawQuery
+            val stableQuery = if (!rawQuery.isNullOrBlank()) {
+                val queryParts = rawQuery.split("&")
+                    .mapNotNull { pair ->
+                        val parts = pair.split("=", limit = 2)
+                        val key = parts[0]
+                        val value = if (parts.size > 1) parts[1] else ""
+                        if (!ephemeralParams.contains(key.lowercase())) {
+                            "$key=$value"
+                        } else null
+                    }
+                    .sorted()
+                if (queryParts.isNotEmpty()) "?" + queryParts.joinToString("&") else ""
+            } else ""
 
             if (host.isNotBlank() && path.isNotBlank()) {
                 "$scheme://$host$port$path$stableQuery"
             } else {
-                uri.toString().substringBefore("?")
+                url.substringBefore("?")
             }
         } catch (_: Throwable) {
-            uri.toString().substringBefore("?")
+            url.substringBefore("?")
+        }
+    }
+
+    fun generateCacheKey(uri: Uri): String {
+        return try {
+            val urlStr = uri.toString()
+            if (urlStr.isNotBlank()) {
+                generateCacheKey(urlStr)
+            } else {
+                ""
+            }
+        } catch (_: Throwable) {
+            ""
         }
     }
 

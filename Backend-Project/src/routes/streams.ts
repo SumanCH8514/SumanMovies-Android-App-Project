@@ -54,8 +54,9 @@ streamsRouter.get("/:provider/:id", async (c) => {
     }
 
     if (provider === "moviebox") {
+      const detailPath = c.req.query("detailPath") || c.req.query("path") || "";
       const client = new MovieBoxClient();
-      const result = await client.episodeStreams(id, season, episode);
+      const result = await client.episodeStreams(id, season, episode, detailPath);
       const response: StreamResponse = {
         provider: "moviebox",
         id,
@@ -64,8 +65,9 @@ streamsRouter.get("/:provider/:id", async (c) => {
         episode: episode > 0 ? episode : undefined,
         streams: result.streams,
         subtitles: result.subtitles,
+        downloads: result.downloads,
       };
-      return c.json({ data: response });
+      return c.json({ data: response, downloads: result.downloads });
     }
 
     if (provider === "fourkhdhub" || provider === "4khdhub") {

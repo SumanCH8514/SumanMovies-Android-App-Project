@@ -80,10 +80,14 @@ import com.sumanonline.sumanmovies.ui.theme.TextMuted
 import com.sumanonline.sumanmovies.ui.theme.TextPrimary
 import com.sumanonline.sumanmovies.ui.theme.TextSecondary
 
+import androidx.compose.material.icons.filled.Info
+import com.sumanonline.sumanmovies.BuildConfig
+
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
+    onNavigateAbout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -337,7 +341,7 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .clickable {
                                 if (!state.isCheckingForUpdates) {
-                                    viewModel.checkForUpdates("1.0.0")
+                                    viewModel.checkForUpdates(BuildConfig.VERSION_NAME)
                                 }
                             }
                             .padding(horizontal = 14.dp, vertical = 14.dp),
@@ -354,7 +358,7 @@ fun SettingsScreen(
                             Text(text = "Check for Updates", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (state.isCheckingForUpdates) "Checking GitHub for new releases..." else "Version 1.0.0 • Tap to check GitHub releases",
+                                text = if (state.isCheckingForUpdates) "Checking GitHub for new releases..." else "Version ${BuildConfig.VERSION_NAME} • Tap to check GitHub releases",
                                 color = TextMuted,
                                 fontSize = 11.sp
                             )
@@ -365,6 +369,14 @@ fun SettingsScreen(
                             Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp))
                         }
                     }
+                    SettingsDivider()
+                    SettingsActionItem(
+                        icon = Icons.Default.Info,
+                        title = "About Project",
+                        subtitle = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) • Details & Licenses",
+                        color = TextPrimary,
+                        onClick = onNavigateAbout
+                    )
                     SettingsDivider()
                     SettingsActionItem(
                         icon = Icons.Default.Web,
@@ -390,7 +402,7 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "SumanMovies • 1.0.0 - a SumanOnline Project",
+                        text = "SumanMovies • v${BuildConfig.VERSION_NAME} - A SumanOnline Project",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -658,7 +670,7 @@ fun SettingsScreen(
                 Text(text = "You're Up to Date", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
             },
             text = {
-                Text(text = "SumanMovies v1.0.0 is the latest version available on GitHub.", color = TextSecondary, fontSize = 13.5.sp)
+                Text(text = "SumanMovies v${BuildConfig.VERSION_NAME} is the latest version available on GitHub.", color = TextSecondary, fontSize = 13.5.sp)
             },
             confirmButton = {
                 Button(

@@ -29,10 +29,12 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import com.sumanonline.sumanmovies.BuildConfig
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,6 +81,7 @@ fun ProfileScreen(
     onNavigateBookmarks: () -> Unit = {},
     onNavigateHistory: () -> Unit = {},
     onNavigateDownloads: () -> Unit = {},
+    onNavigateAbout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -124,7 +127,7 @@ fun ProfileScreen(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "v1.0.0",
+                        text = "v${BuildConfig.VERSION_NAME}",
                         color = accent,
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold
@@ -304,14 +307,29 @@ fun ProfileScreen(
                 ProfileListItem(
                     icon = Icons.Default.Refresh,
                     title = "Check for Updates",
-                    subtitle = if (state.isCheckingForUpdates) "Checking GitHub for new releases..." else "Version 1.0.0 • Tap to check GitHub releases",
+                    subtitle = if (state.isCheckingForUpdates) "Checking GitHub for new releases..." else "Version ${BuildConfig.VERSION_NAME} • Tap to check GitHub releases",
                     isLoading = state.isCheckingForUpdates,
                     accentColor = accent,
                     onClick = {
                         if (!state.isCheckingForUpdates) {
-                            viewModel.checkForUpdates("1.0.0")
+                            viewModel.checkForUpdates(BuildConfig.VERSION_NAME)
                         }
                     }
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderDark)
+                )
+
+                ProfileListItem(
+                    icon = Icons.Default.Info,
+                    title = "About Project",
+                    subtitle = "Version, architecture, licenses & legal",
+                    accentColor = accent,
+                    onClick = onNavigateAbout
                 )
 
                 Box(
@@ -344,14 +362,14 @@ fun ProfileScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "SumanMovies • Version 1.0.0 (Official Build)",
+                    text = "SumanMovies • Version ${BuildConfig.VERSION_NAME} (Official Build)",
                     color = TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "a SumanOnline Project",
+                    text = "A SumanOnline Project",
                     color = TextMuted.copy(alpha = 0.7f),
                     fontSize = 11.sp
                 )
@@ -434,7 +452,7 @@ fun ProfileScreen(
             },
             text = {
                 Text(
-                    text = "SumanMovies v1.0.0 is the latest version available on GitHub.",
+                    text = "SumanMovies v${BuildConfig.VERSION_NAME} is the latest version available on GitHub.",
                     color = TextSecondary,
                     fontSize = 13.5.sp
                 )

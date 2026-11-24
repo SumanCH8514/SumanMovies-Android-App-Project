@@ -25,8 +25,7 @@ class PlaybackEngineUnitTest {
     @Test
     fun testCacheKeySanitizationRemovesEphemeralQueryParameters() {
         val originalUrl = "https://cdn.example.com/videos/movie123.mp4?token=abc123xyz&expires=1795280000&sig=deadbeef"
-        val parsedUri = Uri.parse(originalUrl)
-        val cacheKey = PlayerCacheManager.generateCacheKey(parsedUri)
+        val cacheKey = PlayerCacheManager.generateCacheKey(originalUrl)
 
         assertFalse(cacheKey.contains("token="))
         assertFalse(cacheKey.contains("expires="))
@@ -37,11 +36,11 @@ class PlaybackEngineUnitTest {
 
     @Test
     fun testCacheKeyDistinguishesDifferentVideos() {
-        val uriA = Uri.parse("https://cdn.example.com/videos/movie_A.mp4?token=123")
-        val uriB = Uri.parse("https://cdn.example.com/videos/movie_B.mp4?token=123")
+        val urlA = "https://cdn.example.com/videos/movie_A.mp4?token=123"
+        val urlB = "https://cdn.example.com/videos/movie_B.mp4?token=123"
 
-        val keyA = PlayerCacheManager.generateCacheKey(uriA)
-        val keyB = PlayerCacheManager.generateCacheKey(uriB)
+        val keyA = PlayerCacheManager.generateCacheKey(urlA)
+        val keyB = PlayerCacheManager.generateCacheKey(urlB)
 
         assertNotEquals(keyA, keyB)
         assertTrue(keyA.contains("movie_A.mp4"))
@@ -76,6 +75,7 @@ class PlaybackEngineUnitTest {
         )
         assertTrue(engine.isRetryable(timeoutException))
 
+        val mockUri = org.mockito.Mockito.mock(Uri::class.java)
         val server503Exception = PlaybackException(
             "Service Unavailable",
             HttpDataSource.InvalidResponseCodeException(
@@ -83,7 +83,7 @@ class PlaybackEngineUnitTest {
                 "Service Unavailable",
                 null,
                 emptyMap(),
-                androidx.media3.datasource.DataSpec(Uri.parse("https://cdn.example.com/video.mp4")),
+                androidx.media3.datasource.DataSpec(mockUri),
                 byteArrayOf()
             ),
             PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
@@ -104,6 +104,7 @@ class PlaybackEngineUnitTest {
         )
         assertFalse(engine.isRetryable(codecException))
 
+        val mockUri = org.mockito.Mockito.mock(Uri::class.java)
         val notFoundException = PlaybackException(
             "HTTP 404 Not Found",
             HttpDataSource.InvalidResponseCodeException(
@@ -111,7 +112,7 @@ class PlaybackEngineUnitTest {
                 "Not Found",
                 null,
                 emptyMap(),
-                androidx.media3.datasource.DataSpec(Uri.parse("https://cdn.example.com/missing.mp4")),
+                androidx.media3.datasource.DataSpec(mockUri),
                 byteArrayOf()
             ),
             PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS

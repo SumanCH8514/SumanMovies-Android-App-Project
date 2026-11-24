@@ -58,6 +58,7 @@ export interface StreamResponse {
   episode?: number;
   streams: ReleaseStream[];
   subtitles: SubtitleOption[];
+  downloads?: any[];
 }
 
 export interface TVChannel {

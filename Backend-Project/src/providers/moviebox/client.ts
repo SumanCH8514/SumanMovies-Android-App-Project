@@ -230,20 +230,159 @@ export class MovieBoxClient {
     }
   }
 
+  private static h5Token: string | null = null;
+
+  private async ensureH5Token(subjectId: string, detailPath = ""): Promise<string | null> {
+    if (MovieBoxClient.h5Token) return MovieBoxClient.h5Token;
+
+    try {
+      const param = detailPath ? `detailPath=${encodeURIComponent(detailPath)}` : `subjectId=${encodeURIComponent(subjectId)}`;
+      const url = `https://h5-api.aoneroom.com/wefeed-h5api-bff/detail?${param}`;
+      const resp = await fetch(url, {
+        headers: {
+          "Referer": "https://videodownloader.site/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+        },
+      });
+
+      const xUser = resp.headers.get("x-user");
+      if (xUser) {
+        try {
+          const parsed = JSON.parse(xUser);
+          if (parsed?.token) {
+            MovieBoxClient.h5Token = parsed.token;
+            return parsed.token;
+          }
+        } catch {}
+      }
+
+      const setCookie = resp.headers.get("set-cookie");
+      if (setCookie) {
+        const match = setCookie.match(/token=([^;]+)/);
+        if (match && match[1]) {
+          MovieBoxClient.h5Token = match[1];
+          return match[1];
+        }
+      }
+    } catch {}
+
+    return null;
+  }
+
+  public async getWebDownloads(
+    subjectId: string,
+    season = 0,
+    episode = 0,
+    detailPath = ""
+  ): Promise<{ downloads: any[]; streams: ReleaseStream[]; subtitles: SubtitleOption[] }> {
+    try {
+      let token = await this.ensureH5Token(subjectId, detailPath);
+
+      const fetchDownloads = async (se: number, ep: number, authToken: string | null) => {
+        const params = new URLSearchParams();
+        params.append("subjectId", subjectId);
+        if (se > 0 || ep > 0) {
+          params.append("se", String(se));
+          params.append("ep", String(ep));
+        }
+        if (detailPath) {
+          params.append("detailPath", detailPath);
+        }
+        params.append("supportCodecs[h264]", "1");
+
+        const url = `https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/download?${params.toString()}`;
+        const headers: Record<string, string> = {
+          "Referer": "https://videodownloader.site/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+        };
+
+        if (authToken) {
+          headers["Cookie"] = `token=${authToken}`;
+          headers["Authorization"] = `Bearer ${authToken}`;
+        }
+
+        const resp = await fetch(url, { headers });
+
+        if (resp.status === 401 || resp.status === 429) {
+          MovieBoxClient.h5Token = null;
+        }
+
+        if (!resp.ok) return null;
+        const json: any = await resp.json().catch(() => null);
+        return json?.data;
+      };
+
+      let data = await fetchDownloads(season, episode, token);
+      if (!data && !token) {
+        token = await this.ensureH5Token(subjectId, detailPath);
+        data = await fetchDownloads(season, episode, token);
+      }
+      if ((!data?.downloads || data.downloads.length === 0) && season === 0 && episode === 0) {
+        data = await fetchDownloads(1, 1, token);
+      }
+
+      const rawDownloads: any[] = Array.isArray(data?.downloads) ? data.downloads : [];
+      const rawCaptions: any[] = Array.isArray(data?.captions) ? data.captions : [];
+
+      const streams: ReleaseStream[] = [];
+      for (const item of rawDownloads) {
+        const link = item?.url;
+        if (link && typeof link === "string" && link.startsWith("http")) {
+          const resNum = Number(item?.resolution || 480);
+          streams.push({
+            quality: `${resNum}p`,
+            format: "MP4",
+            url: link,
+            headers: {
+              "User-Agent": this.userAgent,
+              "Referer": "https://videodownloader.site/",
+            },
+            sizeBytes: Number(item?.size || 0) || undefined,
+            directFile: true,
+            codec: item?.codecName || "h264",
+            label: `${resNum}p Direct Stream`,
+          });
+        }
+      }
+
+      const subtitles: SubtitleOption[] = [];
+      for (const cap of rawCaptions) {
+        const capUrl = cap?.url;
+        if (capUrl && typeof capUrl === "string" && capUrl.startsWith("http")) {
+          subtitles.push({
+            language: cap?.lanName || cap?.lan || "Unknown",
+            url: capUrl,
+          });
+        }
+      }
+
+      return {
+        downloads: rawDownloads,
+        streams,
+        subtitles,
+      };
+    } catch {
+      return { downloads: [], streams: [], subtitles: [] };
+    }
+  }
+
   public async episodeStreams(
     subjectId: string,
     season = 0,
-    episode = 0
-  ): Promise<{ streams: ReleaseStream[]; subtitles: SubtitleOption[] }> {
-    const detailsPath = `/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`;
+    episode = 0,
+    detailPath = ""
+  ): Promise<{ streams: ReleaseStream[]; subtitles: SubtitleOption[]; downloads: any[] }> {
     const resourcePath =
       season === 0 && episode === 0
         ? `/wefeed-mobile-bff/subject-api/resource?subjectId=${subjectId}&page=1&perPage=20`
         : `/wefeed-mobile-bff/subject-api/resource?subjectId=${subjectId}&se=${season}&ep=${episode}&page=1&perPage=20`;
 
-    const [playInfoRes, resourcesRes] = await Promise.allSettled([
+    const [playInfoRes, resourcesRes, webDownloadsRes] = await Promise.allSettled([
       this.getPlayInfo(subjectId, season, episode),
       this.get(resourcePath),
+      this.getWebDownloads(subjectId, season, episode, detailPath),
     ]);
 
     const releases: ReleaseStream[] = [];
@@ -314,10 +453,32 @@ export class MovieBoxClient {
       }
     }
 
+    let downloads: any[] = [];
+    if (webDownloadsRes.status === "fulfilled" && webDownloadsRes.value) {
+      downloads = webDownloadsRes.value.downloads || [];
+      for (const st of webDownloadsRes.value.streams || []) {
+        const base = st.url.split("?")[0];
+        if (base && !seenUrls.has(base)) {
+          seenUrls.add(base);
+          releases.push(st);
+        }
+      }
+    }
+
     let subtitles: SubtitleOption[] = [];
     try {
       subtitles = await this.getCaptions(subjectId, "0");
     } catch {}
+
+    if (webDownloadsRes.status === "fulfilled" && webDownloadsRes.value?.subtitles?.length) {
+      const existingSubs = new Set(subtitles.map((s) => s.url));
+      for (const sub of webDownloadsRes.value.subtitles) {
+        if (!existingSubs.has(sub.url)) {
+          existingSubs.add(sub.url);
+          subtitles.push(sub);
+        }
+      }
+    }
 
     releases.sort((a, b) => {
       const qA = parseInt(a.quality, 10) || 0;
@@ -325,6 +486,6 @@ export class MovieBoxClient {
       return qB - qA;
     });
 
-    return { streams: releases, subtitles };
+    return { streams: releases, subtitles, downloads };
   }
 }

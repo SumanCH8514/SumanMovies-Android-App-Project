@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val appVersionCode = 2
+val appVersionName = "1.1.0"
+
 android {
     namespace = "com.sumanonline.sumanmovies"
     compileSdk = 35
@@ -13,8 +16,8 @@ android {
         applicationId = "com.sumanonline.sumanmovies"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -45,6 +48,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -77,6 +84,8 @@ dependencies {
     ksp(libs.room.compiler)
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.mockito:mockito-core:5.14.2")
 
     implementation(libs.coil.compose)
     implementation(libs.okhttp)
@@ -89,24 +98,34 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
 }
 
-tasks.register<Copy>("copyNewPlayerApk") {
-    dependsOn("assembleDebug")
-    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
-    into(rootProject.file("../apk"))
-    rename { "SumanMovies-v1.0.0-new-player.apk" }
+tasks.register<Copy>("copyReleaseApk") {
+    dependsOn("assembleRelease")
+    from("${layout.buildDirectory.get()}/outputs/apk/release/app-release-unsigned.apk")
+    into(file("${rootDir}/../apk"))
+    rename { "SumanMovies-v${appVersionName}-release-unsigned.apk" }
 }
 
 tasks.register<Copy>("copyDebugApk") {
     dependsOn("assembleDebug")
-    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
-    into(rootProject.file("../apk"))
-    rename { "SumanMovies-v1.0.0-debug.apk" }
+    from("${layout.buildDirectory.get()}/outputs/apk/debug/app-debug.apk")
+    into(file("${rootDir}/../apk"))
+    rename { "SumanMovies-v${appVersionName}-debug.apk" }
 }
 
-tasks.register<Exec>("pushApkToGithub") {
-    dependsOn("copyDebugApk", "copyNewPlayerApk")
+tasks.register("copyAllApks") {
+    dependsOn("copyReleaseApk", "copyDebugApk")
+}
+
+tasks.register<Exec>("cleanScratchAndPush") {
     workingDir = rootProject.file("..")
-    commandLine("cmd", "/c", "git add . && git commit -m \"feat: update latest built APK\" && git push origin main > scratch_git_push.txt 2>&1")
+    commandLine(
+        "cmd", "/c",
+        "del /f /q scratch_git_release.txt scratch_git_push.txt scratch_gh_release.txt scratch_git_status.txt scratch_git.txt scratch_git_log.txt 2>nul & " +
+        "git add . & " +
+        "git commit --amend --no-edit & " +
+        "git tag -f -a v1.1.0 -m \"Release SumanMovies v1.1.0\" & " +
+        "git push origin main --force --tags > scratch_clean_push.txt 2>&1"
+    )
     isIgnoreExitValue = true
 }
 

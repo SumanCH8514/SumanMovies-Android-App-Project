@@ -26,7 +26,9 @@ class AppUpdateManager(
     private val repoOwner: String = "SumanCH8514",
     private val repoName: String = "SumanMovies-Android-App-Project"
 ) {
-    suspend fun checkForUpdates(currentVersion: String = "1.0.0"): AppUpdateInfo = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(
+        currentVersion: String = com.sumanonline.sumanmovies.BuildConfig.VERSION_NAME
+    ): AppUpdateInfo = withContext(Dispatchers.IO) {
         val apiUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
         val fallbackWebUrl = "https://github.com/$repoOwner/$repoName/releases"
 
