@@ -116,15 +116,14 @@ tasks.register("copyAllApks") {
     dependsOn("copyReleaseApk", "copyDebugApk")
 }
 
-tasks.register<Exec>("cleanScratchAndPush") {
+tasks.register<Exec>("finalPush") {
     workingDir = rootProject.file("..")
     commandLine(
         "cmd", "/c",
-        "del /f /q scratch_git_release.txt scratch_git_push.txt scratch_gh_release.txt scratch_git_status.txt scratch_git.txt scratch_git_log.txt 2>nul & " +
+        "del /f /q scratch_clean_push.txt 2>nul & " +
         "git add . & " +
-        "git commit --amend --no-edit & " +
-        "git tag -f -a v1.1.0 -m \"Release SumanMovies v1.1.0\" & " +
-        "git push origin main --force --tags > scratch_clean_push.txt 2>&1"
+        "git commit -m \"chore: clean up build scripts and scratch files\" & " +
+        "git push origin main"
     )
     isIgnoreExitValue = true
 }
